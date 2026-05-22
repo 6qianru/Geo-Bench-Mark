@@ -9,7 +9,10 @@ from pydantic import BaseModel
 import yaml
 
 from geoskillbench.api.task_manager import TaskManager
+from geoskillbench.executors.langgraph_executor import LangGraphExecutor
+from geoskillbench.executors.nanobot_executor import NanobotExecutor
 from geoskillbench.models.scenario import SkillConfig
+from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
 from geoskillbench.runner import TestRunner
 
 
@@ -204,9 +207,26 @@ def get_skill_file(skill_id: str, path: str) -> dict:
 
 @app.get("/api/executors")
 def list_executors() -> list[dict]:
+    adapter = MCPToolAdapter()
+    langgraph = LangGraphExecutor(adapter)
+    nanobot = NanobotExecutor(adapter)
     return [
-        {"id": "langgraph", "name": "LangGraphExecutor", "available": True, "default": True},
-        {"id": "nanobot", "name": "NanobotExecutor", "available": True, "default": False},
+        {
+            "id": "langgraph",
+            "name": "LangGraphExecutor",
+            "available": langgraph.real_runtime_available,
+            "default": True,
+            "runtime_mode": "real" if langgraph.real_runtime_available else "compatibility",
+            "issue": langgraph.runtime_issue,
+        },
+        {
+            "id": "nanobot",
+            "name": "NanobotExecutor",
+            "available": nanobot.compatibility_note is None,
+            "default": False,
+            "runtime_mode": "real" if nanobot.compatibility_note is None else "compatibility",
+            "issue": nanobot.compatibility_note,
+        },
     ]
 
 

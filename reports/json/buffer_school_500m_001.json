@@ -2,7 +2,7 @@
   "scenario_id": "buffer_school_500m_001",
   "scenario_name": "学校周边 500 米缓冲区分析",
   "status": "passed",
-  "duration_ms": 19,
+  "duration_ms": 37,
   "stage_results": {
     "LOAD_SCENARIO": "PASSED",
     "PREPARE_DATA": "PASSED",
@@ -11,8 +11,8 @@
     "RUN_AGENT": "PASSED",
     "RUN_ASSERTIONS": "PASSED",
     "RUN_JUDGE": "PASSED",
-    "GENERATE_REPORT": "RUNNING",
-    "CLEANUP": "PENDING"
+    "GENERATE_REPORT": "PASSED",
+    "CLEANUP": "PASSED"
   },
   "skill": {
     "id": "gis_buffer_analysis",
@@ -51,7 +51,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T05:53:26.863942+00:00",
+      "recorded_at": "2026-05-22T09:17:41.221944+00:00",
       "order": 1
     },
     {
@@ -70,7 +70,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T05:53:26.863954+00:00",
+      "recorded_at": "2026-05-22T09:17:41.221952+00:00",
       "order": 2
     },
     {
@@ -91,7 +91,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T05:53:26.863957+00:00",
+      "recorded_at": "2026-05-22T09:17:41.221955+00:00",
       "order": 3
     }
   ],
@@ -177,13 +177,21 @@
   "final_output": {
     "final_response": "[FINAL]\n已完成 schools 数据的 500 米缓冲区分析。 结果数据句柄为 dataset://generated/buffer_result，输出 CRS 为 EPSG:3857。",
     "executor": "langgraph",
+    "runtime_mode": "compatibility",
+    "runtime_metadata": {
+      "runtime_mode": "compatibility",
+      "runtime_available": true,
+      "issue": "Model 'rule-based-agent' is a heuristic compatibility model, so the executor is using the rule-based fallback path.",
+      "model": "rule-based-agent"
+    },
     "output_artifacts": {
       "result_dataset": {
         "dataset": "buffer_result",
         "handle": "dataset://generated/buffer_result",
         "geometry_type": "Polygon",
         "crs": "EPSG:3857"
-      }
+      },
+      "executor_note": "Model 'rule-based-agent' is a heuristic compatibility model, so the executor is using the rule-based fallback path."
     }
   },
   "loaded_skill_references": [],

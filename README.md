@@ -51,6 +51,15 @@ The backend now exposes a pluggable session-based executor layer:
 - `langgraph`: default executor implementation for GeoSkillBench
 - `nanobot`: nanobot-compatible executor contract
 
+Current `langgraph` behavior:
+
+- If `langchain`, `langgraph`, and `langchain-openai` are installed and `runtime.agent_model` points to a real model, GeoSkillBench uses the real LangGraph ReAct executor.
+- If the runtime dependencies are missing, or the scenario uses a compatibility model such as `rule-based-agent`, the system falls back to the shared heuristic executor.
+- The actual runtime path is exposed in:
+  - `GET /api/executors`
+  - task/session SSE events
+  - run result `final_output.runtime_mode` and `final_output.runtime_metadata`
+
 Current `nanobot` behavior:
 
 - If a real `nanobot` Python runtime is installed later, this is the integration point.
@@ -85,4 +94,25 @@ VITE_API_BASE=http://127.0.0.1:8000 npm run dev
 python -m geoskillbench.cli validate scenarios/buffer_school_500m_001.yml
 python -m geoskillbench.cli list-tools scenarios/buffer_school_500m_001.yml
 python -m geoskillbench.cli run scenarios/buffer_school_500m_001.yml --output reports
+```
+
+## Real Model Configuration
+
+Create `models.yaml` in the repo root if you want to use a model alias with the real `langgraph` executor:
+
+```yaml
+models:
+  qwen-max:
+    provider: openai_compatible
+    model: qwen-max
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+```
+
+Then point a scenario at that alias, for example:
+
+```yaml
+runtime:
+  executor: langgraph
+  agent_model: qwen-max
 ```

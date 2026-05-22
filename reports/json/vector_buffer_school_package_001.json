@@ -2,7 +2,7 @@
   "scenario_id": "vector_buffer_school_package_001",
   "scenario_name": "使用矢量分析 Skill Package 完成学校 500 米缓冲区分析",
   "status": "passed",
-  "duration_ms": 99,
+  "duration_ms": 109,
   "stage_results": {
     "LOAD_SCENARIO": "PASSED",
     "PREPARE_DATA": "PASSED",
@@ -11,8 +11,8 @@
     "RUN_AGENT": "PASSED",
     "RUN_ASSERTIONS": "PASSED",
     "RUN_JUDGE": "PASSED",
-    "GENERATE_REPORT": "RUNNING",
-    "CLEANUP": "PENDING"
+    "GENERATE_REPORT": "PASSED",
+    "CLEANUP": "PASSED"
   },
   "skill": {
     "id": "gis-vector-analysis",
@@ -186,7 +186,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "skill_internal",
-      "recorded_at": "2026-05-22T05:53:46.635114+00:00",
+      "recorded_at": "2026-05-22T09:17:41.293682+00:00",
       "order": 5
     },
     {
@@ -203,7 +203,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "skill_internal",
-      "recorded_at": "2026-05-22T05:53:46.635122+00:00",
+      "recorded_at": "2026-05-22T09:17:41.293690+00:00",
       "order": 6
     },
     {
@@ -226,7 +226,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T05:53:46.635125+00:00",
+      "recorded_at": "2026-05-22T09:17:41.293692+00:00",
       "order": 7
     },
     {
@@ -245,7 +245,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T05:53:46.635127+00:00",
+      "recorded_at": "2026-05-22T09:17:41.293693+00:00",
       "order": 8
     },
     {
@@ -262,7 +262,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "skill_internal",
-      "recorded_at": "2026-05-22T05:53:46.635129+00:00",
+      "recorded_at": "2026-05-22T09:17:41.293695+00:00",
       "order": 9
     },
     {
@@ -279,7 +279,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "skill_internal",
-      "recorded_at": "2026-05-22T05:53:46.635130+00:00",
+      "recorded_at": "2026-05-22T09:17:41.293697+00:00",
       "order": 10
     },
     {
@@ -300,7 +300,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T05:53:46.635132+00:00",
+      "recorded_at": "2026-05-22T09:17:41.293698+00:00",
       "order": 11
     }
   ],
@@ -386,20 +386,28 @@
   "final_output": {
     "final_response": "[FINAL]\n已完成 schools 数据的 500 米缓冲区分析。 结果数据句柄为 dataset://generated/buffer_result，输出 CRS 为 EPSG:3857。",
     "executor": "langgraph",
+    "runtime_mode": "compatibility",
+    "runtime_metadata": {
+      "runtime_mode": "compatibility",
+      "runtime_available": true,
+      "issue": "Model 'rule-based-agent' is a heuristic compatibility model, so the executor is using the rule-based fallback path.",
+      "model": "rule-based-agent"
+    },
     "output_artifacts": {
       "result_dataset": {
         "dataset": "buffer_result",
         "handle": "dataset://generated/buffer_result",
         "geometry_type": "Polygon",
         "crs": "EPSG:3857"
-      }
+      },
+      "executor_note": "Model 'rule-based-agent' is a heuristic compatibility model, so the executor is using the rule-based fallback path."
     }
   },
   "loaded_skill_references": [
     {
       "path": "references/S0_执行计划.md",
       "title": "执行计划",
-      "loaded_at": "2026-05-22T05:53:46.590278+00:00",
+      "loaded_at": "2026-05-22T09:17:41.255124+00:00",
       "loaded_by": "executor",
       "content_hash": "f198198e1e0f2661ae42acd67ba37efe10e06f94214bff877aa4fa270f49da68",
       "order": 1
@@ -407,7 +415,7 @@
     {
       "path": "references/00_数据确认.md",
       "title": "数据确认",
-      "loaded_at": "2026-05-22T05:53:46.603813+00:00",
+      "loaded_at": "2026-05-22T09:17:41.268215+00:00",
       "loaded_by": "executor",
       "content_hash": "41e97d00c0ae059162f5d982f0f752b721eb803745e135a1ab2c3709cbea83ac",
       "order": 2
@@ -415,7 +423,7 @@
     {
       "path": "references/01_缓冲区分析.md",
       "title": "缓冲区分析",
-      "loaded_at": "2026-05-22T05:53:46.619576+00:00",
+      "loaded_at": "2026-05-22T09:17:41.280715+00:00",
       "loaded_by": "executor",
       "content_hash": "1593a1d944c58e90f9046aa31c52ddb441d2711a87fbbcc6165542b09d382061",
       "order": 3
@@ -423,7 +431,7 @@
     {
       "path": "references/10_结果展示.md",
       "title": "结果展示",
-      "loaded_at": "2026-05-22T05:53:46.634963+00:00",
+      "loaded_at": "2026-05-22T09:17:41.293537+00:00",
       "loaded_by": "executor",
       "content_hash": "008f3e1d3c450ee8e41ea3b1a0b1c78ab8afb7bfa4ddb043a0c39264323c3f0f",
       "order": 4

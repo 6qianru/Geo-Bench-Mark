@@ -160,6 +160,8 @@ class TestRunner:
                 stage_results=dict(stage_results),
                 executor=runtime_executor,
                 session_id=session.session_id,
+                runtime_mode=session.runtime_mode,
+                runtime_metadata=session.runtime_metadata,
                 memory_enabled=memory_enabled,
             )
 
@@ -282,13 +284,13 @@ class TestRunner:
                 final_output={
                     "final_response": recorder.final_output["final_response"],
                     "executor": runtime_executor,
+                    "runtime_mode": session.runtime_mode,
+                    "runtime_metadata": session.runtime_metadata,
                     "output_artifacts": output_artifacts,
                 },
                 loaded_skill_references=recorder.loaded_skill_references,
                 errors=recorder.errors,
             )
-            if output_dir:
-                self.report_generator.write_reports(output_dir, result)
             stage_results["GENERATE_REPORT"] = "PASSED"
             emit("stage", stage="GENERATE_REPORT", status="PASSED", stage_results=dict(stage_results))
             stage_results["CLEANUP"] = "RUNNING"
@@ -296,6 +298,8 @@ class TestRunner:
             self.fixture_manager.cleanup(test_context)
             stage_results["CLEANUP"] = "PASSED"
             result.stage_results = dict(stage_results)
+            if output_dir:
+                self.report_generator.write_reports(output_dir, result)
             emit("result", stage="CLEANUP", status=result.status, stage_results=dict(stage_results), result=result.model_dump())
             return result
         except Exception as exc:

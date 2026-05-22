@@ -49,6 +49,8 @@ class ExecutorSession(BaseModel):
     scenario_id: str
     skill_id: str
     created_at: str
+    runtime_mode: Literal["real", "compatibility"] = "real"
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExecutorStepResult(BaseModel):

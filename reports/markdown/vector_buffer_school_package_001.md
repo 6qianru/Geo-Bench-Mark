@@ -2,7 +2,7 @@
 
 - Scenario ID: `vector_buffer_school_package_001`
 - Status: `passed`
-- Duration: `99 ms`
+- Duration: `109 ms`
 - Judge Score: `1.0`
 
 ## Stage Results
@@ -13,8 +13,8 @@
 - `RUN_AGENT`: `PASSED`
 - `RUN_ASSERTIONS`: `PASSED`
 - `RUN_JUDGE`: `PASSED`
-- `GENERATE_REPORT`: `RUNNING`
-- `CLEANUP`: `PENDING`
+- `GENERATE_REPORT`: `PASSED`
+- `CLEANUP`: `PASSED`
 
 ## Assertions
 - `skill_loaded`: `passed` - Skill was loaded: gis-vector-analysis
@@ -38,10 +38,10 @@
 - `create_buffer`: `success` args={'dataset': 'schools_metric', 'distance': 500.0, 'distance_unit': 'meter', 'output_alias': 'buffer_result'}
 
 ## Loaded Skill References
-- `references/S0_执行计划.md` at `2026-05-22T05:53:46.590278+00:00`
-- `references/00_数据确认.md` at `2026-05-22T05:53:46.603813+00:00`
-- `references/01_缓冲区分析.md` at `2026-05-22T05:53:46.619576+00:00`
-- `references/10_结果展示.md` at `2026-05-22T05:53:46.634963+00:00`
+- `references/S0_执行计划.md` at `2026-05-22T09:17:41.255124+00:00`
+- `references/00_数据确认.md` at `2026-05-22T09:17:41.268215+00:00`
+- `references/01_缓冲区分析.md` at `2026-05-22T09:17:41.280715+00:00`
+- `references/10_结果展示.md` at `2026-05-22T09:17:41.293537+00:00`
 
 ## Final Response
 

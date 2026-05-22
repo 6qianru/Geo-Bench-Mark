@@ -1,0 +1,10 @@
+models:
+  qwen-max:
+    provider: openai_compatible
+    model: qwen-max
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+
+  gpt-4o-mini:
+    provider: langchain
+    model: openai:gpt-4o-mini

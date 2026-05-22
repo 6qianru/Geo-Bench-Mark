@@ -2,7 +2,7 @@
 
 - Scenario ID: `buffer_school_500m_001`
 - Status: `passed`
-- Duration: `19 ms`
+- Duration: `37 ms`
 - Judge Score: `1.0`
 
 ## Stage Results
@@ -13,8 +13,8 @@
 - `RUN_AGENT`: `PASSED`
 - `RUN_ASSERTIONS`: `PASSED`
 - `RUN_JUDGE`: `PASSED`
-- `GENERATE_REPORT`: `RUNNING`
-- `CLEANUP`: `PENDING`
+- `GENERATE_REPORT`: `PASSED`
+- `CLEANUP`: `PASSED`
 
 ## Assertions
 - `skill_loaded`: `passed` - Skill was loaded: gis_buffer_analysis

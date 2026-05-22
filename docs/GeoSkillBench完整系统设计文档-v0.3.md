@@ -1,0 +1,4092 @@
+# GeoSkillBench 完整系统设计文档
+
+版本：v0.3  
+定位：GIS Agent Skill 自动化测试与评估系统  
+适用对象：基于 MCP GIS 工具和 Agent Skill 提示词能力包的智能体测试平台  
+合并内容：后端测试引擎设计 + 前端控制台设计 + API 与实现计划
+
+---
+
+## 文档说明
+
+本文档由两部分合并整理而成：
+
+1. GeoSkillBench 核心测试引擎设计：定义 Scenario、Agent Skill、MCP Tool、Actor、Judge、Assertion、Test Runner 和报告机制。
+2. GeoSkillBench 前端控制台设计：定义 Skill 上传、Scenario 选择、Agent/Actor/Judge 模型配置、测试运行、实时进度、统计可视化和前后端 API。
+
+本文档可直接交给 Codex、Cursor、Claude Code 等代码生成工具，作为实现 GeoSkillBench 系统的设计依据。
+
+---
+
+# 第一部分：GeoSkillBench 核心测试引擎设计
+
+## 1. 背景与目标
+
+当前系统已经具备一组 GIS MCP 工具，例如数据元信息查询、缓冲区分析、裁剪、叠加、面积统计、投影转换、地图发布等。这些 MCP 工具是底层可执行能力。
+
+在 MCP 工具之上，还需要编写一批 Agent Skill。这里的 Agent Skill 不是工具函数，而是类似 LangChain Skills 的提示词技能包，用来指导智能体如何把多个 MCP 工具串联起来，完成一个完整的 GIS 业务任务。
+
+例如：
+
+- 缓冲区分析技能
+- 裁剪与统计技能
+- 叠加分析技能
+- 绿线审查技能
+- 生态影响分析技能
+- 选址分析技能
+- 地图制图技能
+
+本系统的目标是自动测试这些 Agent Skill 是否有效。系统通过场景文件定义测试任务、输入数据、所需 MCP 工具、被测 Agent Skill、预期行为、断言规则和 Judge 评估标准。系统执行时自动导入测试数据、连接 MCP 工具、加载被测 Skill，驱动 Agent 完成任务，并通过规则断言和 AI Judge 判断结果是否符合预期。
+
+一句话概括：
+
+> GeoSkillBench 是一个用于验证 GIS Agent Skill 是否能稳定、正确地驱动 GIS MCP 工具链完成业务场景的自动化测试与评估框架。
+
+---
+
+## 2. 核心概念
+
+### 2.1 MCP Tool
+
+MCP Tool 是底层可执行工具，负责真正执行 GIS 操作。
+
+示例：
+
+```text
+query_dataset_metadata
+reproject_dataset
+create_buffer
+clip_dataset
+overlay_analysis
+calculate_area
+publish_map
+```
+
+MCP Tool 的特点：
+
+- 有明确的工具名称
+- 有输入参数 Schema
+- 有返回结果
+- 可以通过 MCP Server 发现和调用
+- 负责执行实际 GIS 操作
+
+---
+
+### 2.2 Agent Skill
+
+Agent Skill 是提示词技能包，负责指导 Agent 如何完成某类 GIS 任务。
+
+Agent Skill 不直接执行 GIS 操作，而是描述：
+
+- 什么时候使用该技能
+- 需要哪些输入
+- 应该追问哪些信息
+- 推荐使用哪些 MCP 工具
+- 工具调用顺序是什么
+- 需要注意哪些 GIS 规则
+- 常见错误有哪些
+- 最终应该输出什么
+
+示例：
+
+```text
+gis_buffer_analysis
+gis_clip_and_statistics
+gis_overlay_analysis
+gis_greenline_review
+```
+
+Agent Skill 的本质是：
+
+```text
+Prompt + Domain Rules + Tool Usage Guidance + Examples + Expected Behavior
+```
+
+---
+
+### 2.3 Scenario
+
+Scenario 是测试场景，通常用 YAML 定义。
+
+Scenario 负责声明：
+
+- 本次测试要用哪些测试数据
+- 本次测试要连接哪些 MCP Server
+- 本次测试需要哪些 MCP Tools
+- 本次测试要验证哪个 Agent Skill
+- 用户任务是什么
+- Actor 如何模拟用户交互
+- 预期行为是什么
+- 断言规则是什么
+- Judge 评分标准是什么
+
+---
+
+### 2.4 Actor
+
+Actor 是一个模拟用户的 AI Agent。
+
+当被测 Agent 需要追问信息时，Actor 根据场景定义进行回答。例如：
+
+- 被测 Agent 问：使用哪个数据？
+- Actor 回答：使用 schools 数据。
+- 被测 Agent 问：缓冲距离是多少？
+- Actor 回答：500 米。
+
+Actor 的目标不是评价结果，而是模拟测试场景中的用户或外部角色。
+
+---
+
+### 2.5 Judge
+
+Judge 是一个评估型 AI Agent。
+
+Judge 根据场景描述、预期结果、完整对话、工具调用日志、规则断言结果和最终输出，对被测 Agent Skill 的表现进行语义评估。
+
+Judge 适合判断：
+
+- Agent 是否真正理解了任务
+- 是否选择了正确的 Skill
+- 是否正确串联 MCP 工具
+- 是否遗漏了关键步骤
+- 是否存在编造
+- 最终说明是否符合 GIS 业务语境
+
+---
+
+### 2.6 Assertion
+
+Assertion 是确定性的规则校验。
+
+适合用程序判断的内容不应该完全交给 Judge，而应该由 Assertion Engine 自动检查。
+
+示例：
+
+- 是否加载了指定 Skill
+- 是否调用了指定 Tool
+- Tool 参数是否正确
+- 结果数据集是否存在
+- 结果几何类型是否正确
+- 要素数量是否符合预期
+- 空间关系是否满足
+- 最终回答是否包含关键内容
+
+---
+
+## 3. 总体架构
+
+```text
+GeoSkillBench
+│
+├── Scenario Repository
+│   └── 存放测试场景 YAML
+│
+├── Skill Repository
+│   └── 存放 GIS Agent Skill YAML / Markdown
+│
+├── Fixture Manager
+│   └── 导入、注册、清理测试数据
+│
+├── MCP Tool Adapter
+│   └── 连接 MCP Server，加载所需 MCP Tools
+│
+├── Agent Runtime
+│   └── 创建并运行被测 Agent
+│
+├── Actor Runtime
+│   └── 模拟用户交互
+│
+├── Execution Recorder
+│   └── 记录对话、Skill 加载、工具调用和结果
+│
+├── Assertion Engine
+│   └── 执行确定性规则校验
+│
+├── Judge Engine
+│   └── 使用 AI Judge 进行语义评估
+│
+├── Report Generator
+│   └── 生成 JSON / Markdown / HTML 报告
+│
+└── Test Runner
+    └── 编排完整测试流程
+```
+
+---
+
+## 4. 设计原则
+
+### 4.1 Scenario 控制测试环境
+
+Scenario 负责描述本次测试的环境和预期，包括数据、MCP Server、工具、Skill、Actor、Assertions 和 Judge。
+
+---
+
+### 4.2 Skill 控制任务策略
+
+Skill 只描述如何完成某类 GIS 任务，不应该和具体测试环境强绑定。
+
+同一个 Skill 可以在多个 Scenario 中复用。
+
+例如 `gis_buffer_analysis` 可以用于：
+
+- 学校 500 米服务范围
+- 道路 50 米影响范围
+- 河流 1 公里保护范围
+- 污染源 3 公里影响范围
+
+---
+
+### 4.3 Tool 执行真实能力
+
+MCP Tool 是实际执行 GIS 操作的能力。Skill 不替代 Tool，而是指导 Agent 如何选择和组合 Tool。
+
+---
+
+### 4.4 规则优先，Judge 辅助
+
+能够通过程序判断的内容，优先使用 Assertion Engine。
+
+AI Judge 主要负责判断语义、流程合理性、任务完成度和解释质量。
+
+---
+
+### 4.5 测试过程必须可记录、可复现、可回归
+
+系统需要记录：
+
+- 场景版本
+- Skill 版本
+- MCP 工具清单
+- 输入数据版本
+- 对话历史
+- Tool Call 历史
+- Tool 参数
+- Tool 返回结果
+- Assertion 结果
+- Judge 结果
+- 最终报告
+
+---
+
+## 5. 执行流程
+
+推荐执行阶段如下：
+
+```text
+1. LOAD_SCENARIO
+2. PREPARE_DATA
+3. CONNECT_MCP
+4. LOAD_SKILL
+5. RUN_AGENT
+6. RUN_ASSERTIONS
+7. RUN_JUDGE
+8. GENERATE_REPORT
+9. CLEANUP
+```
+
+每个阶段都有状态：
+
+```text
+PENDING
+RUNNING
+PASSED
+FAILED
+SKIPPED
+```
+
+完整流程：
+
+```text
+加载场景 YAML
+  ↓
+校验场景结构
+  ↓
+导入并注册所需测试数据
+  ↓
+生成 Dataset Handle / Dataset Context
+  ↓
+连接 MCP Server
+  ↓
+list_tools 获取工具清单
+  ↓
+检查 required tools 是否存在
+  ↓
+加载被测 Agent Skill
+  ↓
+构建 TestContext
+  ↓
+创建被测 Agent
+  ↓
+输入 user_task
+  ↓
+Agent 根据 Skill 和可用工具执行任务
+  ↓
+如需用户交互，调用 Actor 生成回复
+  ↓
+记录完整执行过程
+  ↓
+收集最终结果
+  ↓
+执行 Assertion Engine
+  ↓
+执行 AI Judge
+  ↓
+生成测试报告
+  ↓
+清理临时数据
+```
+
+---
+
+## 6. Scenario YAML 设计
+
+### 6.1 示例
+
+```yaml
+id: buffer_school_500m_001
+name: 学校周边 500 米缓冲区分析
+version: 1.0.0
+type: agent_skill_test
+
+description: >
+  测试 gis_buffer_analysis 技能是否能够引导智能体正确调用 MCP 工具，
+  完成学校点数据的 500 米缓冲区分析。
+
+target:
+  skill_id: gis_buffer_analysis
+  skill_version: 1.0.0
+
+runtime:
+  agent_model: qwen3.5-32b
+  actor_model: qwen3.5-14b
+  judge_model: qwen3.5-32b
+  max_turns: 6
+  timeout_seconds: 180
+
+data:
+  fixtures:
+    - id: schools
+      name: 学校点数据
+      type: vector
+      format: geojson
+      path: ./fixtures/schools.geojson
+      crs: EPSG:4326
+      geometry_type: Point
+      import_as: dataset
+      register_metadata: true
+      cleanup: true
+
+mcp:
+  servers:
+    - id: gpa_vector
+      name: GPA 矢量分析 MCP 服务
+      transport: sse
+      url: http://localhost:8000/gpamcp/vector/sse
+      required: true
+
+    - id: metadata
+      name: 空间元数据 MCP 服务
+      transport: sse
+      url: http://localhost:8000/gpamcp/metadata/sse
+      required: true
+
+  tools:
+    required:
+      - server: metadata
+        name: query_dataset_metadata
+
+      - server: gpa_vector
+        name: create_buffer
+
+    optional:
+      - server: gpa_vector
+        name: reproject_dataset
+
+      - server: gpa_vector
+        name: publish_map
+
+skill:
+  load_mode: file
+  path: ./skills/gis_buffer_analysis.skill.yml
+  required: true
+
+user_task: >
+  请帮我生成学校周边 500 米的服务范围。
+
+actor:
+  enabled: true
+  profile: normal_user
+  max_turns: 5
+  goal: >
+    如果智能体询问使用哪个数据，请回答使用 schools 数据。
+    如果智能体询问缓冲距离，请回答 500 米。
+    如果智能体询问输出格式，请回答 GeoJSON。
+    不要主动提供未被询问的信息。
+
+expected_behavior:
+  should_load_skills:
+    - gis_buffer_analysis
+
+  should_call_tools:
+    - query_dataset_metadata
+    - create_buffer
+
+  optional_tools:
+    - reproject_dataset
+    - publish_map
+
+  should_not:
+    - 直接在 EPSG:4326 下按米做平面缓冲
+    - 编造不存在的数据字段
+    - 在缺少输入数据时直接执行
+
+assertions:
+  - type: skill_loaded
+    skill_id: gis_buffer_analysis
+
+  - type: tool_available
+    tool: query_dataset_metadata
+
+  - type: tool_available
+    tool: create_buffer
+
+  - type: tool_called
+    tool: query_dataset_metadata
+
+  - type: tool_called
+    tool: create_buffer
+
+  - type: tool_argument_equals
+    tool: create_buffer
+    argument: distance
+    value: 500
+
+  - type: result_dataset_exists
+    alias: buffer_result
+
+  - type: result_geometry_type_in
+    target: buffer_result
+    values:
+      - Polygon
+      - MultiPolygon
+
+  - type: final_response_contains
+    values:
+      - 500
+      - 缓冲区
+      - 结果数据
+
+judge:
+  enabled: true
+  rubric:
+    - 是否正确识别为缓冲区分析任务
+    - 是否加载了 gis_buffer_analysis skill
+    - 是否正确使用 schools 数据
+    - 是否正确调用 query_dataset_metadata 和 create_buffer
+    - 是否合理处理 EPSG:4326 与米级缓冲问题
+    - 最终回答是否包含结果数据句柄、缓冲距离和简要说明
+
+pass_criteria:
+  required_assertions_passed: true
+  judge_score_min: 0.8
+```
+
+---
+
+## 7. Agent Skill YAML 设计
+
+### 7.1 示例
+
+```yaml
+id: gis_buffer_analysis
+name: GIS 缓冲区分析技能
+version: 1.0.0
+type: prompt_skill
+
+description: >
+  用于指导智能体完成点、线、面数据的缓冲区分析任务。
+
+when_to_use: >
+  当用户要求分析某类空间对象周边一定距离范围、影响范围、服务范围、
+  保护范围、辐射范围时，应考虑使用本技能。
+
+required_inputs:
+  - input_dataset
+  - buffer_distance
+  - distance_unit
+
+optional_inputs:
+  - output_format
+  - dissolve
+  - target_crs
+
+recommended_mcp_tools:
+  - query_dataset_metadata
+  - reproject_dataset
+  - create_buffer
+  - publish_map
+
+instructions: |
+  你是一个 GIS 缓冲区分析专家。
+
+  执行本技能时，应遵循以下步骤：
+
+  1. 理解用户要分析的对象和范围。
+  2. 确认输入数据集、缓冲距离和距离单位。
+  3. 查询输入数据的元数据，包括几何类型、CRS、空间范围和字段信息。
+  4. 如果输入数据是 EPSG:4326 等经纬度坐标系，不要直接做米级平面缓冲。
+     应先转换到合适的投影坐标系，或使用支持测地线缓冲的工具。
+  5. 调用 create_buffer 工具生成缓冲区。
+  6. 检查结果是否为空，几何类型是否为 Polygon 或 MultiPolygon。
+  7. 返回结果数据句柄，并用简洁语言说明分析过程、距离、单位、CRS 和结果含义。
+
+tool_sequence:
+  - query_dataset_metadata
+  - reproject_dataset?
+  - create_buffer
+  - publish_map?
+
+expected_outputs:
+  - result_dataset_handle
+  - result_geometry_type
+  - textual_summary
+
+common_failures:
+  - 未确认缓冲距离
+  - 将经纬度坐标直接按米缓冲
+  - 没有返回结果数据句柄
+  - 没有说明输出结果的 CRS
+  - 用户输入模糊时没有追问
+```
+
+---
+
+## 8. TestContext 设计
+
+系统在准备阶段生成统一的 `TestContext`。后续 Agent、Actor、Assertion Engine、Judge 和 Report Generator 都使用该对象。
+
+### 8.1 示例
+
+```json
+{
+  "scenario_id": "buffer_school_500m_001",
+  "scenario_name": "学校周边 500 米缓冲区分析",
+  "skill": {
+    "id": "gis_buffer_analysis",
+    "version": "1.0.0",
+    "loaded": true
+  },
+  "datasets": {
+    "schools": {
+      "handle": "dataset://test/buffer_school_500m_001/schools",
+      "name": "学校点数据",
+      "geometry_type": "Point",
+      "crs": "EPSG:4326",
+      "feature_count": 25,
+      "semantic_desc": "学校点数据，用于测试学校周边缓冲区分析"
+    }
+  },
+  "mcp_tools": {
+    "query_dataset_metadata": {
+      "server": "metadata",
+      "available": true
+    },
+    "create_buffer": {
+      "server": "gpa_vector",
+      "available": true
+    },
+    "reproject_dataset": {
+      "server": "gpa_vector",
+      "available": true,
+      "optional": true
+    }
+  }
+}
+```
+
+---
+
+## 9. 模块设计
+
+### 9.1 Scenario Loader
+
+职责：
+
+- 读取 YAML / JSON 场景文件
+- 校验必填字段
+- 转换为内部 Scenario 对象
+- 支持批量加载场景
+
+建议接口：
+
+```python
+class ScenarioLoader:
+    def load(self, path: str) -> Scenario:
+        pass
+
+    def load_dir(self, path: str) -> list[Scenario]:
+        pass
+```
+
+---
+
+### 9.2 Fixture Manager
+
+职责：
+
+- 导入测试数据
+- 注册测试数据
+- 创建数据句柄
+- 读取基础元信息
+- 生成 Dataset Context
+- 测试结束后清理数据
+
+建议接口：
+
+```python
+class FixtureManager:
+    def prepare(self, scenario: Scenario) -> dict:
+        pass
+
+    def cleanup(self, test_context: TestContext) -> None:
+        pass
+```
+
+输出示例：
+
+```json
+{
+  "schools": {
+    "handle": "dataset://test/buffer_school_500m_001/schools",
+    "crs": "EPSG:4326",
+    "geometry_type": "Point",
+    "feature_count": 25
+  }
+}
+```
+
+---
+
+### 9.3 MCP Tool Adapter
+
+职责：
+
+- 连接 MCP Server
+- 调用 list_tools
+- 检查 required tools 是否存在
+- 将 MCP Tools 转换为 Agent 可调用工具
+- 记录每次 Tool Call
+
+建议接口：
+
+```python
+class MCPToolAdapter:
+    def connect_servers(self, servers: list[MCPServerConfig]) -> None:
+        pass
+
+    def list_tools(self) -> list[MCPToolInfo]:
+        pass
+
+    def validate_required_tools(self, required_tools: list[RequiredTool]) -> None:
+        pass
+
+    def get_agent_tools(self, tool_names: list[str]) -> list:
+        pass
+```
+
+---
+
+### 9.4 Skill Loader
+
+职责：
+
+- 加载被测 Agent Skill
+- 校验 Skill 文件结构
+- 提供 Skill Prompt
+- 记录 Skill 是否被 Agent 加载
+
+建议接口：
+
+```python
+class SkillLoader:
+    def load(self, skill_config: SkillConfig) -> AgentSkill:
+        pass
+
+    def render_prompt(self, skill: AgentSkill) -> str:
+        pass
+```
+
+---
+
+### 9.5 Agent Runtime
+
+职责：
+
+- 创建被测 Agent
+- 组合以下上下文：
+  - User Task
+  - Agent Skill Prompt
+  - TestContext
+  - 可用 MCP Tools
+- 执行多轮任务
+- 记录 Agent 输出和 Tool Call
+
+建议接口：
+
+```python
+class AgentRuntime:
+    def run(
+        self,
+        scenario: Scenario,
+        test_context: TestContext,
+        skill: AgentSkill,
+        tools: list
+    ) -> AgentRunResult:
+        pass
+```
+
+---
+
+### 9.6 Actor Runtime
+
+职责：
+
+- 当被测 Agent 需要用户补充信息时，根据 Actor Goal 生成回复
+- 控制最大交互轮次
+- 不主动提供无关信息
+
+建议接口：
+
+```python
+class ActorRuntime:
+    def reply(
+        self,
+        scenario: Scenario,
+        conversation: list[Message],
+        test_context: TestContext
+    ) -> str:
+        pass
+```
+
+---
+
+### 9.7 Execution Recorder
+
+职责：
+
+记录完整执行过程：
+
+- 场景 ID
+- Skill 加载历史
+- 对话历史
+- Tool Call 历史
+- Tool 参数
+- Tool 返回值
+- 错误信息
+- 中间结果
+- 最终输出
+
+建议数据结构：
+
+```json
+{
+  "scenario_id": "buffer_school_500m_001",
+  "skill_loaded": [
+    "gis_buffer_analysis"
+  ],
+  "conversation": [],
+  "tool_calls": [],
+  "final_output": {},
+  "errors": []
+}
+```
+
+---
+
+### 9.8 Assertion Engine
+
+职责：
+
+- 根据 Scenario 中的 assertions 执行确定性校验
+- 输出每条断言的通过 / 失败 / 跳过状态
+- 计算规则得分
+
+建议接口：
+
+```python
+class AssertionEngine:
+    def run(
+        self,
+        assertions: list[Assertion],
+        recorder: ExecutionRecorder,
+        test_context: TestContext
+    ) -> AssertionResult:
+        pass
+```
+
+---
+
+### 9.9 Judge Engine
+
+职责：
+
+- 调用 AI Judge
+- 输入完整测试上下文
+- 输出结构化评分结果
+
+建议接口：
+
+```python
+class JudgeEngine:
+    def evaluate(
+        self,
+        scenario: Scenario,
+        test_context: TestContext,
+        recorder: ExecutionRecorder,
+        assertion_result: AssertionResult
+    ) -> JudgeResult:
+        pass
+```
+
+Judge 输出格式：
+
+```json
+{
+  "score": 0.86,
+  "passed": true,
+  "reason": "智能体正确完成了缓冲区分析，并返回了结果数据。",
+  "issues": [
+    "最终回答没有明确说明输出 CRS。"
+  ],
+  "suggestions": [
+    "建议在 Skill 中强化最终输出格式要求。"
+  ]
+}
+```
+
+---
+
+### 9.10 Report Generator
+
+职责：
+
+- 生成 JSON 报告
+- 生成 Markdown 报告
+- 可选生成 HTML 报告
+- 汇总多个场景的测试结果
+
+建议接口：
+
+```python
+class ReportGenerator:
+    def generate_json(self, result: TestResult) -> str:
+        pass
+
+    def generate_markdown(self, result: TestResult) -> str:
+        pass
+
+    def generate_html(self, result: TestResult) -> str:
+        pass
+```
+
+---
+
+## 10. 断言类型设计
+
+### 10.1 Skill 相关断言
+
+```yaml
+- type: skill_loaded
+  skill_id: gis_buffer_analysis
+```
+
+判断是否加载了指定 Skill。
+
+---
+
+### 10.2 Tool 可用性断言
+
+```yaml
+- type: tool_available
+  tool: create_buffer
+```
+
+判断 MCP 连接后是否能发现该工具。
+
+---
+
+### 10.3 Tool 调用断言
+
+```yaml
+- type: tool_called
+  tool: create_buffer
+```
+
+判断执行过程中是否调用了指定工具。
+
+---
+
+### 10.4 Tool 调用顺序断言
+
+```yaml
+- type: tool_sequence
+  sequence:
+    - query_dataset_metadata
+    - create_buffer
+```
+
+判断工具调用顺序是否符合预期。
+
+---
+
+### 10.5 Tool 参数断言
+
+```yaml
+- type: tool_argument_equals
+  tool: create_buffer
+  argument: distance
+  value: 500
+```
+
+判断工具参数是否正确。
+
+---
+
+### 10.6 结果数据存在断言
+
+```yaml
+- type: result_dataset_exists
+  alias: buffer_result
+```
+
+判断是否生成了结果数据。
+
+---
+
+### 10.7 几何类型断言
+
+```yaml
+- type: result_geometry_type_in
+  target: buffer_result
+  values:
+    - Polygon
+    - MultiPolygon
+```
+
+判断结果数据几何类型是否符合预期。
+
+---
+
+### 10.8 字段存在断言
+
+```yaml
+- type: field_exists
+  target: buffer_result
+  field: school_id
+```
+
+---
+
+### 10.9 空间关系断言
+
+```yaml
+- type: spatial_relation
+  relation: contains
+  source: buffer_result
+  target: schools
+```
+
+---
+
+### 10.10 最终回答内容断言
+
+```yaml
+- type: final_response_contains
+  values:
+    - 500
+    - 缓冲区
+    - 结果数据
+```
+
+---
+
+### 10.11 禁止行为断言
+
+```yaml
+- type: forbidden_behavior
+  rule: no_meter_buffer_directly_on_epsg4326
+```
+
+---
+
+## 11. 结果报告设计
+
+### 11.1 单场景报告结构
+
+```json
+{
+  "scenario_id": "buffer_school_500m_001",
+  "scenario_name": "学校周边 500 米缓冲区分析",
+  "status": "passed",
+  "duration_ms": 14320,
+  "stage_results": {
+    "LOAD_SCENARIO": "PASSED",
+    "PREPARE_DATA": "PASSED",
+    "CONNECT_MCP": "PASSED",
+    "LOAD_SKILL": "PASSED",
+    "RUN_AGENT": "PASSED",
+    "RUN_ASSERTIONS": "PASSED",
+    "RUN_JUDGE": "PASSED",
+    "CLEANUP": "PASSED"
+  },
+  "skill": {
+    "id": "gis_buffer_analysis",
+    "version": "1.0.0",
+    "loaded": true
+  },
+  "tool_calls": [
+    {
+      "tool": "query_dataset_metadata",
+      "status": "success"
+    },
+    {
+      "tool": "create_buffer",
+      "arguments": {
+        "distance": 500
+      },
+      "status": "success"
+    }
+  ],
+  "assertions": [
+    {
+      "type": "tool_called",
+      "target": "create_buffer",
+      "passed": true
+    }
+  ],
+  "judge": {
+    "score": 0.86,
+    "passed": true,
+    "reason": "智能体正确完成了缓冲区分析。"
+  }
+}
+```
+
+---
+
+### 11.2 汇总报告指标
+
+系统可以统计：
+
+- 场景总数
+- 通过数量
+- 失败数量
+- 通过率
+- Skill 通过率
+- Tool 调用准确率
+- 参数抽取准确率
+- 追问行为通过率
+- GIS 规则合规率
+- Judge 平均分
+
+示例：
+
+```text
+总场景数：30
+通过：26
+失败：4
+通过率：86.7%
+
+gis_buffer_analysis:
+  场景数：10
+  通过：9
+  通过率：90%
+
+gis_overlay_analysis:
+  场景数：8
+  通过：6
+  通过率：75%
+```
+
+---
+
+## 12. 推荐项目结构
+
+```text
+geoskillbench/
+├── README.md
+├── pyproject.toml
+├── scenarios/
+│   ├── buffer_school_500m_001.yml
+│   └── clip_landuse_001.yml
+├── skills/
+│   ├── gis_buffer_analysis.skill.yml
+│   └── gis_clip_and_statistics.skill.yml
+├── fixtures/
+│   ├── schools.geojson
+│   └── landuse.geojson
+├── reports/
+│   ├── json/
+│   ├── markdown/
+│   └── html/
+└── geoskillbench/
+    ├── __init__.py
+    ├── models/
+    │   ├── scenario.py
+    │   ├── skill.py
+    │   ├── test_context.py
+    │   └── result.py
+    ├── loader/
+    │   ├── scenario_loader.py
+    │   └── skill_loader.py
+    ├── fixtures/
+    │   └── fixture_manager.py
+    ├── mcp/
+    │   └── mcp_tool_adapter.py
+    ├── runtime/
+    │   ├── agent_runtime.py
+    │   ├── actor_runtime.py
+    │   └── judge_runtime.py
+    ├── recorder/
+    │   └── execution_recorder.py
+    ├── assertions/
+    │   ├── assertion_engine.py
+    │   └── builtin_assertions.py
+    ├── reports/
+    │   └── report_generator.py
+    └── runner.py
+```
+
+---
+
+## 13. 技术选型建议
+
+### 13.1 核心语言
+
+建议使用 Python。
+
+原因：
+
+- 适合 AI Agent 编排
+- LangChain / LangGraph 生态成熟
+- GIS 数据处理库丰富
+- YAML / JSON / 报告生成方便
+
+---
+
+### 13.2 推荐依赖
+
+```text
+langchain
+langgraph
+langchain-mcp-adapters
+pydantic
+pyyaml
+httpx
+jinja2
+geopandas
+shapely
+pyproj
+pytest
+rich
+```
+
+如果初版不做真实 GIS 几何校验，可以先不引入 `geopandas`，只做工具调用和结果结构校验。
+
+---
+
+## 14. MVP 实现范围
+
+第一版建议只实现核心闭环。
+
+### 14.1 MVP 必须支持
+
+- 读取单个 Scenario YAML
+- 读取单个 Agent Skill YAML
+- 导入或模拟 Fixture 数据
+- 连接一个或多个 MCP Server
+- 检查 required MCP tools
+- 创建被测 Agent
+- 支持 Actor 多轮交互
+- 记录 Skill 加载、对话和工具调用
+- 支持基础 Assertions
+- 支持 Judge 评估
+- 生成 JSON 和 Markdown 报告
+
+---
+
+### 14.2 MVP 基础断言
+
+第一版实现以下断言即可：
+
+```text
+skill_loaded
+tool_available
+tool_called
+tool_sequence
+tool_argument_equals
+result_dataset_exists
+result_geometry_type_in
+final_response_contains
+```
+
+---
+
+### 14.3 MVP 暂缓功能
+
+以下功能可以后续再做：
+
+- Web UI
+- 批量场景并发执行
+- 历史趋势分析
+- Skill 版本对比
+- 自动生成测试场景
+- 复杂空间关系校验
+- CI/CD 深度集成
+- HTML 可视化报告
+- 结果地图预览
+
+---
+
+## 15. Agent Prompt 组装建议
+
+被测 Agent 的上下文建议由以下部分组成：
+
+```text
+1. 基础系统提示词
+2. 被测 Agent Skill Prompt
+3. 当前 TestContext
+4. 当前可用 MCP Tools 清单
+5. 用户任务 user_task
+```
+
+示例：
+
+```text
+你是一个 GIS 智能体，需要根据用户任务调用可用 MCP 工具完成空间分析。
+
+当前加载的 Agent Skill：
+{skill_prompt}
+
+当前测试数据：
+{dataset_context}
+
+当前可用工具：
+{tool_context}
+
+用户任务：
+{user_task}
+
+要求：
+1. 如果缺少必要信息，应向用户追问。
+2. 不要编造不存在的数据、字段或结果。
+3. 工具调用完成后，应返回结果数据句柄和简要说明。
+```
+
+---
+
+## 16. Actor Prompt 组装建议
+
+```text
+你是测试场景中的用户模拟器。
+
+你的目标是配合被测 GIS Agent 完成本场景任务。
+请严格根据以下 Actor Goal 回答问题，不要主动提供无关信息。
+
+Actor Goal:
+{actor_goal}
+
+当前对话:
+{conversation}
+
+当前测试数据:
+{dataset_context}
+```
+
+---
+
+## 17. Judge Prompt 组装建议
+
+```text
+你是 GIS Agent Skill 自动化测试系统中的评估者。
+
+请根据以下信息判断被测 Agent 是否完成了测试场景。
+
+场景描述：
+{scenario_description}
+
+被测 Skill：
+{skill_id}
+
+用户任务：
+{user_task}
+
+预期行为：
+{expected_behavior}
+
+完整对话：
+{conversation}
+
+工具调用记录：
+{tool_calls}
+
+断言结果：
+{assertion_result}
+
+最终输出：
+{final_output}
+
+评分标准：
+{rubric}
+
+请输出 JSON：
+{
+  "score": 0.0 到 1.0,
+  "passed": true 或 false,
+  "reason": "简要说明",
+  "issues": [],
+  "suggestions": []
+}
+```
+
+---
+
+## 18. 失败类型设计
+
+建议将失败原因分层，便于排查。
+
+```text
+SCENARIO_LOAD_FAILED
+DATA_PREPARE_FAILED
+MCP_CONNECT_FAILED
+REQUIRED_TOOL_MISSING
+SKILL_LOAD_FAILED
+AGENT_RUN_FAILED
+ASSERTION_FAILED
+JUDGE_FAILED
+CLEANUP_FAILED
+```
+
+示例：
+
+```json
+{
+  "status": "failed_to_prepare",
+  "error_type": "REQUIRED_TOOL_MISSING",
+  "message": "Required MCP tool create_buffer was not found in server gpa_vector."
+}
+```
+
+---
+
+## 19. Codex 实现建议
+
+建议分阶段实现。
+
+### 阶段一：数据模型和加载器
+
+实现：
+
+- Scenario pydantic model
+- Skill pydantic model
+- ScenarioLoader
+- SkillLoader
+- 基础配置校验
+
+---
+
+### 阶段二：MCP 工具接入
+
+实现：
+
+- MCPServerConfig
+- MCPToolAdapter
+- list_tools
+- required tool 校验
+- tool 调用记录 wrapper
+
+---
+
+### 阶段三：Runner 主流程
+
+实现：
+
+- TestRunner
+- Stage 状态记录
+- TestContext 构建
+- ExecutionRecorder
+
+---
+
+### 阶段四：Agent / Actor / Judge
+
+实现：
+
+- AgentRuntime
+- ActorRuntime
+- JudgeEngine
+- prompt 组装
+- max_turns 控制
+
+---
+
+### 阶段五：Assertion Engine
+
+实现基础断言：
+
+- skill_loaded
+- tool_available
+- tool_called
+- tool_sequence
+- tool_argument_equals
+- result_dataset_exists
+- result_geometry_type_in
+- final_response_contains
+
+---
+
+### 阶段六：Report Generator
+
+实现：
+
+- JSON 报告
+- Markdown 报告
+- 批量汇总报告
+
+---
+
+## 20. 最小可运行命令设计
+
+### 20.1 运行单个场景
+
+```bash
+geoskillbench run scenarios/buffer_school_500m_001.yml
+```
+
+---
+
+### 20.2 运行目录下所有场景
+
+```bash
+geoskillbench run scenarios/
+```
+
+---
+
+### 20.3 指定输出目录
+
+```bash
+geoskillbench run scenarios/ --output reports/
+```
+
+---
+
+### 20.4 只校验场景，不执行
+
+```bash
+geoskillbench validate scenarios/buffer_school_500m_001.yml
+```
+
+---
+
+### 20.5 列出 MCP 工具
+
+```bash
+geoskillbench list-tools scenarios/buffer_school_500m_001.yml
+```
+
+---
+
+## 21. 结论
+
+GeoSkillBench 的核心设计是：
+
+```text
+Scenario 控制测试
+Skill 控制思路
+MCP Tool 执行动作
+Actor 模拟交互
+Assertion 校验事实
+Judge 评价质量
+Report 沉淀结果
+```
+
+它测试的不是单个 MCP 工具是否可调用，而是测试：
+
+> Agent Skill 是否能稳定、正确地引导 GIS Agent 调用 MCP 工具链，完成完整业务场景。
+
+这个系统后续可以发展为 GIS Agent Skill 的回归测试平台、质量评估平台和 Benchmark 平台。
+
+---
+
+# 第二部分：GeoSkillBench 前端控制台设计
+
+## F-1. 前端定位
+
+GeoSkillBench 前端控制台用于让用户以可视化方式完成以下工作：
+
+1. 上传或选择被测 Agent Skill。
+2. 选择或上传测试场景 Scenario。
+3. 配置 Agent、Actor、Judge 使用的大语言模型。
+4. 配置测试次数、并发数、超时时间等运行参数。
+5. 启动测试任务。
+6. 实时查看测试执行进度。
+7. 查看每次测试的对话、工具调用、断言结果和 Judge 评价。
+8. 统计测试通过率、失败原因、模型表现和 Skill 稳定性。
+9. 导出测试报告。
+
+这个前端不是单纯的管理后台，而是一个面向 GIS Agent Skill 质量评估的测试工作台。
+
+---
+
+## F-2. 核心用户流程
+
+```text
+进入 GeoSkillBench 控制台
+  ↓
+上传 / 选择 Agent Skill
+  ↓
+上传 / 选择测试场景 Scenario
+  ↓
+配置 MCP 工具环境
+  ↓
+配置 Agent / Actor / Judge 模型
+  ↓
+设置测试次数、并发数、随机种子、超时时间
+  ↓
+点击“开始测试”
+  ↓
+实时查看测试进度
+  ↓
+查看统计图表和失败详情
+  ↓
+导出 JSON / Markdown / HTML 报告
+```
+
+---
+
+## F-3. 页面总体结构
+
+建议采用左侧导航 + 主工作区布局。
+
+```text
+GeoSkillBench Console
+│
+├── Dashboard                  总览页
+├── Skills                     技能管理
+├── Scenarios                  场景管理
+├── Test Runs                  测试任务
+├── Reports                    测试报告
+├── Model Providers            模型配置
+├── MCP Servers                MCP 工具服务配置
+└── Settings                   系统设置
+```
+
+MVP 阶段可以先做一个单页式测试控制台，后续再拆分为多页面。
+
+---
+
+## F-4. MVP 页面设计
+
+MVP 建议先实现一个核心页面：
+
+```text
+Skill Test Console
+```
+
+页面分为 6 个区域：
+
+```text
+1. Skill 上传与预览区
+2. Scenario 选择与预览区
+3. MCP 工具检查区
+4. 模型角色配置区
+5. 测试运行配置区
+6. 测试结果与可视化区
+```
+
+---
+
+## F-5. Skill 上传与预览区
+
+### F-5.1 功能
+
+用户可以上传被测 Agent Skill 文件。
+
+支持格式：
+
+```text
+.yml
+.yaml
+.md
+.txt
+```
+
+推荐格式为：
+
+```text
+*.skill.yml
+```
+
+上传后前端展示：
+
+- Skill ID
+- Skill 名称
+- Skill 版本
+- Skill 类型
+- description
+- when_to_use
+- required_inputs
+- recommended_mcp_tools
+- common_failures
+- instructions 摘要
+
+### F-5.2 UI 示例
+
+```text
+┌──────────────────────────────────────────────┐
+│ Agent Skill                                  │
+├──────────────────────────────────────────────┤
+│ [上传 Skill 文件]  gis_buffer_analysis.yml   │
+│                                              │
+│ Skill ID: gis_buffer_analysis                │
+│ Name: GIS 缓冲区分析技能                      │
+│ Version: 1.0.0                               │
+│ Type: prompt_skill                           │
+│                                              │
+│ Recommended Tools:                           │
+│ - query_dataset_metadata                     │
+│ - reproject_dataset                          │
+│ - create_buffer                              │
+│ - publish_map                                │
+│                                              │
+│ [查看完整 Skill Prompt] [重新上传]            │
+└──────────────────────────────────────────────┘
+```
+
+### F-5.3 前端状态
+
+```ts
+interface SkillFileState {
+  fileName: string;
+  uploaded: boolean;
+  skillId?: string;
+  name?: string;
+  version?: string;
+  type?: string;
+  recommendedTools?: string[];
+  parsedContent?: unknown;
+  rawText?: string;
+  validationErrors?: string[];
+}
+```
+
+---
+
+## F-6. Scenario 选择与预览区
+
+### F-6.1 功能
+
+用户可以：
+
+1. 上传 Scenario YAML。
+2. 从已有 Scenario Repository 中选择场景。
+3. 多选多个场景进行批量测试。
+4. 查看场景摘要。
+5. 检查场景声明的数据、MCP 工具、断言和 Judge Rubric。
+
+### F-6.2 UI 示例
+
+```text
+┌──────────────────────────────────────────────┐
+│ Test Scenarios                               │
+├──────────────────────────────────────────────┤
+│ [上传 Scenario] [从场景库选择]                │
+│                                              │
+│ 已选择场景：                                  │
+│ ☑ buffer_school_500m_001                     │
+│ ☑ clip_landuse_statistics_001                │
+│ ☐ overlay_greenline_001                      │
+│                                              │
+│ 当前场景摘要：                                │
+│ - User Task: 请帮我生成学校周边500米服务范围   │
+│ - Required Tools:                            │
+│   query_dataset_metadata, create_buffer      │
+│ - Assertions: 8                              │
+│ - Judge Enabled: Yes                         │
+└──────────────────────────────────────────────┘
+```
+
+### F-6.3 前端状态
+
+```ts
+interface ScenarioState {
+  selectedScenarioIds: string[];
+  scenarios: ScenarioSummary[];
+}
+
+interface ScenarioSummary {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  requiredTools: string[];
+  optionalTools: string[];
+  assertionCount: number;
+  judgeEnabled: boolean;
+}
+```
+
+---
+
+## F-7. MCP 工具检查区
+
+### F-7.1 功能
+
+场景和 Skill 都可能声明需要 MCP Tools。
+
+前端需要展示：
+
+- MCP Server 列表
+- 连接状态
+- Required Tools 是否存在
+- Optional Tools 是否存在
+- Tool Schema 是否可读取
+- Tool 与 Skill 推荐工具是否匹配
+
+### F-7.2 UI 示例
+
+```text
+┌──────────────────────────────────────────────┐
+│ MCP Tool Environment                         │
+├──────────────────────────────────────────────┤
+│ Server: gpa_vector                           │
+│ URL: http://localhost:8000/gpamcp/vector/sse │
+│ Status: Connected                            │
+│                                              │
+│ Required Tools:                              │
+│ ✅ query_dataset_metadata                    │
+│ ✅ create_buffer                             │
+│                                              │
+│ Optional Tools:                              │
+│ ✅ reproject_dataset                         │
+│ ⚠ publish_map not found                      │
+│                                              │
+│ [检查 MCP 连接] [查看工具 Schema]             │
+└──────────────────────────────────────────────┘
+```
+
+### F-7.3 工具检查结果
+
+```ts
+interface MCPCheckResult {
+  serverId: string;
+  serverName?: string;
+  url: string;
+  connected: boolean;
+  requiredTools: ToolCheckItem[];
+  optionalTools: ToolCheckItem[];
+  errors?: string[];
+}
+
+interface ToolCheckItem {
+  name: string;
+  available: boolean;
+  serverId?: string;
+  schemaLoaded?: boolean;
+  required: boolean;
+}
+```
+
+---
+
+## F-8. 模型角色配置区
+
+这是前端的重点之一。
+
+系统中至少有三个角色：
+
+```text
+Agent：被测 GIS 智能体
+Actor：模拟用户交互的 AI
+Judge：评估结果的 AI
+```
+
+每个角色都可以配置不同的大语言模型。
+
+### F-8.1 配置项
+
+每个角色支持：
+
+- Provider
+- Model
+- Base URL
+- API Key 引用
+- Temperature
+- Max Tokens
+- Timeout
+- Top P
+- 是否启用
+
+Agent 必启用。
+
+Actor 可选启用。
+
+Judge 可选启用，但建议默认启用。
+
+### F-8.2 UI 示例
+
+```text
+┌──────────────────────────────────────────────┐
+│ Model Role Configuration                     │
+├──────────────────────────────────────────────┤
+│ Agent Model                                  │
+│ Provider: [OpenAI Compatible ▼]              │
+│ Model:    [qwen3.5-32b ▼]                    │
+│ Temp:     [0.2]                              │
+│ MaxTokens:[4096]                             │
+│                                              │
+│ Actor Model                                  │
+│ Enabled:  [✓]                                │
+│ Provider: [OpenAI Compatible ▼]              │
+│ Model:    [qwen3.5-14b ▼]                    │
+│ Temp:     [0.5]                              │
+│                                              │
+│ Judge Model                                  │
+│ Enabled:  [✓]                                │
+│ Provider: [OpenAI Compatible ▼]              │
+│ Model:    [qwen3.5-32b ▼]                    │
+│ Temp:     [0.0]                              │
+│                                              │
+│ [测试模型连接] [保存为配置模板]               │
+└──────────────────────────────────────────────┘
+```
+
+### F-8.3 前端状态
+
+```ts
+type RoleName = "agent" | "actor" | "judge";
+
+interface RoleModelConfig {
+  role: RoleName;
+  enabled: boolean;
+  provider: string;
+  model: string;
+  baseUrl?: string;
+  apiKeyRef?: string;
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  timeoutSeconds?: number;
+}
+
+interface ModelRoleConfigState {
+  agent: RoleModelConfig;
+  actor: RoleModelConfig;
+  judge: RoleModelConfig;
+}
+```
+
+### F-8.4 模型配置建议
+
+Agent：
+
+```text
+temperature: 0.1 - 0.3
+```
+
+用于提高稳定性。
+
+Actor：
+
+```text
+temperature: 0.3 - 0.7
+```
+
+用于模拟自然交互，但不要过高。
+
+Judge：
+
+```text
+temperature: 0.0 - 0.2
+```
+
+用于尽量稳定评分。
+
+---
+
+## F-9. 测试运行配置区
+
+### F-9.1 功能
+
+用户可以配置：
+
+- 测试次数
+- 并发数
+- 最大轮次
+- 单场景超时时间
+- 是否启用 Actor
+- 是否启用 Judge
+- 是否清理测试数据
+- 是否保存完整 Tool Response
+- 是否保存中间数据
+- 随机种子
+- 失败后是否继续运行
+
+### F-9.2 UI 示例
+
+```text
+┌──────────────────────────────────────────────┐
+│ Run Configuration                            │
+├──────────────────────────────────────────────┤
+│ Test Iterations:      [5]                    │
+│ Concurrency:          [2]                    │
+│ Max Turns:            [6]                    │
+│ Scenario Timeout:     [180] seconds          │
+│ Continue on Failure:  [✓]                    │
+│ Cleanup Data:         [✓]                    │
+│ Save Tool Responses:  [✓]                    │
+│ Save Intermediate Data:[ ]                   │
+│ Random Seed:          [20260522]             │
+│                                              │
+│ [开始测试] [只校验配置] [重置]                │
+└──────────────────────────────────────────────┘
+```
+
+### F-9.3 前端状态
+
+```ts
+interface RunConfig {
+  iterations: number;
+  concurrency: number;
+  maxTurns: number;
+  scenarioTimeoutSeconds: number;
+  continueOnFailure: boolean;
+  cleanupData: boolean;
+  saveToolResponses: boolean;
+  saveIntermediateData: boolean;
+  randomSeed?: number;
+}
+```
+
+---
+
+## F-10. 测试执行进度区
+
+测试开始后，页面需要展示实时状态。
+
+### F-10.1 状态层级
+
+测试任务分三层：
+
+```text
+Test Run
+  └── Scenario Run
+        └── Iteration Run
+```
+
+例如：
+
+```text
+Run ID: run_20260522_001
+
+buffer_school_500m_001
+  - iteration 1: passed
+  - iteration 2: failed
+  - iteration 3: running
+
+clip_landuse_001
+  - iteration 1: pending
+```
+
+### F-10.2 阶段状态
+
+每次执行包含阶段：
+
+```text
+LOAD_SCENARIO
+PREPARE_DATA
+CONNECT_MCP
+LOAD_SKILL
+RUN_AGENT
+RUN_ASSERTIONS
+RUN_JUDGE
+GENERATE_REPORT
+CLEANUP
+```
+
+### F-10.3 UI 示例
+
+```text
+┌──────────────────────────────────────────────┐
+│ Test Progress                                │
+├──────────────────────────────────────────────┤
+│ Run ID: run_20260522_001                     │
+│ Status: Running                              │
+│ Progress: 7 / 20                             │
+│                                              │
+│ Overall Progress                             │
+│ [████████████░░░░░░░░] 35%                   │
+│                                              │
+│ Current Running:                             │
+│ - buffer_school_500m_001 / iteration 3       │
+│   Stage: RUN_AGENT                           │
+│                                              │
+│ [暂停] [停止] [查看实时日志]                  │
+└──────────────────────────────────────────────┘
+```
+
+---
+
+## F-11. 测试结果可视化区
+
+### F-11.1 总览卡片
+
+展示核心指标：
+
+```text
+Total Runs
+Passed
+Failed
+Pass Rate
+Average Judge Score
+Average Duration
+Tool Call Accuracy
+Assertion Pass Rate
+```
+
+UI 示例：
+
+```text
+┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐
+│ Total: 50  │ │ Passed: 43 │ │ Failed: 7  │ │ Pass: 86%  │
+└────────────┘ └────────────┘ └────────────┘ └────────────┘
+```
+
+---
+
+### F-11.2 通过率趋势图
+
+展示多次执行的通过率。
+
+```text
+X 轴：Iteration / 时间
+Y 轴：Pass Rate
+```
+
+用于观察同一个 Skill 在多次测试中的稳定性。
+
+---
+
+### F-11.3 角色模型对比图
+
+如果不同角色配置了不同模型，或者多次运行使用不同模型，可以展示：
+
+```text
+Agent Model vs Pass Rate
+Judge Model vs Average Score
+Actor Model vs Clarification Success Rate
+```
+
+示例：
+
+```text
+qwen3.5-32b agent:
+  pass rate 90%
+
+qwen3.5-14b agent:
+  pass rate 76%
+```
+
+---
+
+### F-11.4 失败原因分布图
+
+失败原因分类：
+
+```text
+ASSERTION_FAILED
+REQUIRED_TOOL_MISSING
+AGENT_RUN_FAILED
+JUDGE_FAILED
+TOOL_ARGUMENT_ERROR
+RESULT_DATASET_MISSING
+FINAL_RESPONSE_INCOMPLETE
+GIS_RULE_VIOLATION
+```
+
+建议用饼图或柱状图。
+
+---
+
+### F-11.5 Tool Call 统计
+
+展示：
+
+- 每个工具调用次数
+- 每个工具成功率
+- 工具平均耗时
+- 参数错误次数
+- 工具调用顺序错误次数
+
+示例：
+
+```text
+create_buffer:
+  calls: 50
+  success: 48
+  avg latency: 1.2s
+  argument errors: 2
+```
+
+---
+
+### F-11.6 Assertion 统计
+
+展示每类断言的通过率：
+
+```text
+skill_loaded: 100%
+tool_called: 96%
+tool_argument_equals: 88%
+result_dataset_exists: 90%
+final_response_contains: 84%
+```
+
+这对优化 Skill 很有价值。
+
+---
+
+### F-11.7 Judge 评分分布
+
+展示：
+
+- 平均分
+- 中位数
+- 最低分
+- 最高分
+- 分数分布直方图
+
+---
+
+## F-12. 单次测试详情页
+
+用户点击某一次测试后，进入详情页。
+
+### F-12.1 页面内容
+
+```text
+1. 基本信息
+2. 阶段状态
+3. 对话记录
+4. Skill 加载记录
+5. MCP Tool Call 时间线
+6. Assertion 明细
+7. Judge 评价
+8. 错误日志
+9. 最终输出
+10. 报告下载
+```
+
+### F-12.2 Tool Call 时间线
+
+```text
+[00:01] load_skill(gis_buffer_analysis)
+[00:03] query_dataset_metadata(dataset=schools)
+[00:05] reproject_dataset(...)
+[00:08] create_buffer(distance=500)
+[00:11] final_response
+```
+
+### F-12.3 对话记录
+
+```text
+User:
+请帮我生成学校周边 500 米的服务范围。
+
+Agent:
+请问使用哪个学校数据集？
+
+Actor:
+使用 schools 数据。
+
+Agent:
+好的，我将使用 schools 数据，并生成 500 米缓冲区。
+```
+
+### F-12.4 Assertion 明细
+
+```text
+✅ skill_loaded: gis_buffer_analysis
+✅ tool_called: query_dataset_metadata
+✅ tool_called: create_buffer
+✅ tool_argument_equals: distance = 500
+❌ final_response_contains: 缺少“结果数据”
+```
+
+### F-12.5 Judge 结果
+
+```json
+{
+  "score": 0.82,
+  "passed": true,
+  "reason": "智能体正确完成了缓冲区分析，但最终回答没有明确说明输出 CRS。",
+  "issues": [
+    "最终回答缺少 CRS 信息"
+  ],
+  "suggestions": [
+    "建议在 Skill 的 expected_outputs 中强制要求输出 CRS"
+  ]
+}
+```
+
+---
+
+## F-13. 前端 API 设计
+
+### F-13.1 上传 Skill
+
+```http
+POST /api/skills/upload
+Content-Type: multipart/form-data
+```
+
+返回：
+
+```json
+{
+  "skill_id": "gis_buffer_analysis",
+  "name": "GIS 缓冲区分析技能",
+  "version": "1.0.0",
+  "recommended_tools": [
+    "query_dataset_metadata",
+    "create_buffer"
+  ],
+  "validation_errors": []
+}
+```
+
+---
+
+### F-13.2 上传 Scenario
+
+```http
+POST /api/scenarios/upload
+Content-Type: multipart/form-data
+```
+
+返回：
+
+```json
+{
+  "scenario_id": "buffer_school_500m_001",
+  "name": "学校周边 500 米缓冲区分析",
+  "required_tools": [
+    "query_dataset_metadata",
+    "create_buffer"
+  ],
+  "assertion_count": 8,
+  "judge_enabled": true
+}
+```
+
+---
+
+### F-13.3 检查 MCP 工具
+
+```http
+POST /api/mcp/check
+Content-Type: application/json
+```
+
+请求：
+
+```json
+{
+  "scenario_id": "buffer_school_500m_001"
+}
+```
+
+返回：
+
+```json
+{
+  "servers": [
+    {
+      "server_id": "gpa_vector",
+      "connected": true,
+      "required_tools": [
+        {
+          "name": "create_buffer",
+          "available": true
+        }
+      ],
+      "optional_tools": [
+        {
+          "name": "publish_map",
+          "available": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### F-13.4 测试模型连接
+
+```http
+POST /api/models/test
+Content-Type: application/json
+```
+
+请求：
+
+```json
+{
+  "provider": "openai_compatible",
+  "model": "qwen3.5-32b",
+  "base_url": "http://localhost:3080/v1",
+  "api_key_ref": "gpustack_default"
+}
+```
+
+返回：
+
+```json
+{
+  "success": true,
+  "latency_ms": 420,
+  "model": "qwen3.5-32b"
+}
+```
+
+---
+
+### F-13.5 创建测试任务
+
+```http
+POST /api/test-runs
+Content-Type: application/json
+```
+
+请求：
+
+```json
+{
+  "skill_id": "gis_buffer_analysis",
+  "scenario_ids": [
+    "buffer_school_500m_001"
+  ],
+  "role_models": {
+    "agent": {
+      "provider": "openai_compatible",
+      "model": "qwen3.5-32b",
+      "temperature": 0.2,
+      "max_tokens": 4096
+    },
+    "actor": {
+      "enabled": true,
+      "provider": "openai_compatible",
+      "model": "qwen3.5-14b",
+      "temperature": 0.5
+    },
+    "judge": {
+      "enabled": true,
+      "provider": "openai_compatible",
+      "model": "qwen3.5-32b",
+      "temperature": 0.0
+    }
+  },
+  "run_config": {
+    "iterations": 5,
+    "concurrency": 2,
+    "max_turns": 6,
+    "scenario_timeout_seconds": 180,
+    "continue_on_failure": true,
+    "cleanup_data": true,
+    "save_tool_responses": true
+  }
+}
+```
+
+返回：
+
+```json
+{
+  "run_id": "run_20260522_001",
+  "status": "queued"
+}
+```
+
+---
+
+### F-13.6 获取测试任务状态
+
+```http
+GET /api/test-runs/{run_id}
+```
+
+返回：
+
+```json
+{
+  "run_id": "run_20260522_001",
+  "status": "running",
+  "total": 20,
+  "completed": 7,
+  "passed": 5,
+  "failed": 2,
+  "running": 2,
+  "pending": 11,
+  "started_at": "2026-05-22T10:00:00Z"
+}
+```
+
+---
+
+### F-13.7 获取实时事件
+
+推荐使用 SSE：
+
+```http
+GET /api/test-runs/{run_id}/events
+```
+
+事件类型：
+
+```text
+run_started
+scenario_started
+iteration_started
+stage_changed
+tool_called
+tool_completed
+assertion_completed
+judge_completed
+iteration_completed
+run_completed
+run_failed
+```
+
+事件示例：
+
+```json
+{
+  "event": "stage_changed",
+  "run_id": "run_20260522_001",
+  "scenario_id": "buffer_school_500m_001",
+  "iteration": 3,
+  "stage": "RUN_AGENT",
+  "status": "RUNNING"
+}
+```
+
+---
+
+### F-13.8 获取统计信息
+
+```http
+GET /api/test-runs/{run_id}/stats
+```
+
+返回：
+
+```json
+{
+  "total": 20,
+  "passed": 17,
+  "failed": 3,
+  "pass_rate": 0.85,
+  "avg_judge_score": 0.82,
+  "avg_duration_ms": 15600,
+  "assertion_pass_rate": 0.91,
+  "tool_call_accuracy": 0.88,
+  "failure_reasons": [
+    {
+      "type": "FINAL_RESPONSE_INCOMPLETE",
+      "count": 2
+    },
+    {
+      "type": "TOOL_ARGUMENT_ERROR",
+      "count": 1
+    }
+  ],
+  "assertion_stats": [
+    {
+      "type": "tool_called",
+      "pass_rate": 0.95
+    }
+  ],
+  "tool_stats": [
+    {
+      "tool": "create_buffer",
+      "calls": 20,
+      "success": 19,
+      "avg_latency_ms": 1300
+    }
+  ]
+}
+```
+
+---
+
+### F-13.9 获取单次详情
+
+```http
+GET /api/test-runs/{run_id}/iterations/{iteration_id}
+```
+
+返回：
+
+```json
+{
+  "iteration_id": "iter_001",
+  "scenario_id": "buffer_school_500m_001",
+  "status": "failed",
+  "conversation": [],
+  "skill_loaded": [
+    "gis_buffer_analysis"
+  ],
+  "tool_calls": [],
+  "assertions": [],
+  "judge": {},
+  "final_output": {},
+  "errors": []
+}
+```
+
+---
+
+### F-13.10 下载报告
+
+```http
+GET /api/test-runs/{run_id}/reports/markdown
+GET /api/test-runs/{run_id}/reports/json
+GET /api/test-runs/{run_id}/reports/html
+```
+
+---
+
+## F-14. WebSocket / SSE 实时更新建议
+
+测试任务通常不是瞬时完成，因此前端需要实时更新。
+
+推荐使用 SSE，原因：
+
+- 实现简单
+- 适合服务端持续推送状态
+- 前端用 EventSource 即可
+- 比 WebSocket 更轻量
+
+前端示例：
+
+```ts
+const eventSource = new EventSource(`/api/test-runs/${runId}/events`);
+
+eventSource.onmessage = (event) => {
+  const payload = JSON.parse(event.data);
+  updateRunState(payload);
+};
+```
+
+如果后续需要前端暂停、恢复、强制停止、动态调参，可以增加 WebSocket。
+
+---
+
+## F-15. 推荐前端技术栈
+
+### F-15.1 基础框架
+
+推荐：
+
+```text
+React + TypeScript + Vite
+```
+
+如果项目已有 Vue 技术栈，也可以使用：
+
+```text
+Vue 3 + TypeScript + Vite
+```
+
+由于测试控制台有大量状态、表格、图表和表单，TypeScript 很重要。
+
+---
+
+### F-15.2 UI 组件
+
+可选：
+
+```text
+Ant Design
+Semi Design
+Naive UI
+Element Plus
+shadcn/ui
+```
+
+如果面向内部研发工具，Ant Design 或 Semi Design 会更快。
+
+---
+
+### F-15.3 图表
+
+推荐：
+
+```text
+ECharts
+```
+
+适合展示：
+
+- 通过率趋势
+- 失败原因分布
+- Tool 调用统计
+- Judge 分数分布
+- Assertion 通过率
+
+---
+
+### F-15.4 状态管理
+
+简单 MVP：
+
+```text
+React Query + Zustand
+```
+
+React Query 负责 API 状态，Zustand 负责页面局部配置状态。
+
+---
+
+## F-16. 前端组件拆分建议
+
+```text
+src/
+├── pages/
+│   ├── SkillTestConsole.tsx
+│   ├── TestRunDetail.tsx
+│   └── Reports.tsx
+├── components/
+│   ├── skill/
+│   │   ├── SkillUploader.tsx
+│   │   └── SkillPreview.tsx
+│   ├── scenario/
+│   │   ├── ScenarioUploader.tsx
+│   │   ├── ScenarioSelector.tsx
+│   │   └── ScenarioPreview.tsx
+│   ├── mcp/
+│   │   ├── MCPServerStatus.tsx
+│   │   └── MCPToolCheckPanel.tsx
+│   ├── model/
+│   │   ├── RoleModelConfigPanel.tsx
+│   │   └── ModelConnectionTester.tsx
+│   ├── run/
+│   │   ├── RunConfigForm.tsx
+│   │   ├── RunProgressPanel.tsx
+│   │   └── RunActionBar.tsx
+│   ├── charts/
+│   │   ├── PassRateChart.tsx
+│   │   ├── FailureReasonChart.tsx
+│   │   ├── ToolStatsChart.tsx
+│   │   └── JudgeScoreChart.tsx
+│   └── detail/
+│       ├── ConversationViewer.tsx
+│       ├── ToolCallTimeline.tsx
+│       ├── AssertionResultTable.tsx
+│       └── JudgeResultPanel.tsx
+├── api/
+│   ├── skills.ts
+│   ├── scenarios.ts
+│   ├── mcp.ts
+│   ├── models.ts
+│   └── testRuns.ts
+├── stores/
+│   └── testConsoleStore.ts
+└── types/
+    ├── skill.ts
+    ├── scenario.ts
+    ├── model.ts
+    ├── run.ts
+    └── report.ts
+```
+
+---
+
+## F-17. 页面交互细节
+
+### F-17.1 开始测试按钮启用条件
+
+只有满足以下条件时，按钮才可点击：
+
+```text
+1. 已上传或选择 Skill
+2. 已选择至少一个 Scenario
+3. Required MCP Tools 检查通过
+4. Agent 模型配置有效
+5. 如果 Actor 启用，则 Actor 模型配置有效
+6. 如果 Judge 启用，则 Judge 模型配置有效
+7. 测试次数大于 0
+8. 并发数大于 0
+```
+
+---
+
+### F-17.2 配置校验
+
+点击“只校验配置”时，系统执行：
+
+```text
+1. Skill 格式校验
+2. Scenario 格式校验
+3. Skill 与 Scenario target 是否匹配
+4. MCP Server 连接检查
+5. Required Tools 检查
+6. 模型连接检查
+7. Assertion 类型支持检查
+```
+
+---
+
+### F-17.3 运行中禁止修改关键配置
+
+测试运行后，以下配置应锁定：
+
+- Skill 文件
+- Scenario 列表
+- Agent 模型
+- Actor 模型
+- Judge 模型
+- MCP Server
+- 测试次数
+- 并发数
+
+可以允许用户：
+
+- 查看日志
+- 停止任务
+- 下载已经生成的部分结果
+
+---
+
+### F-17.4 停止测试
+
+前端点击停止后调用：
+
+```http
+POST /api/test-runs/{run_id}/stop
+```
+
+后端应尽量停止未开始的任务，对正在运行的任务做取消标记。
+
+---
+
+## F-18. 可视化指标设计
+
+### F-18.1 Skill 稳定性指标
+
+```text
+Skill Pass Rate = passed_iterations / total_iterations
+```
+
+用于衡量同一个 Skill 多次执行是否稳定。
+
+---
+
+### F-18.2 Tool Chain Accuracy
+
+```text
+Tool Chain Accuracy = 满足预期工具链的测试次数 / 总测试次数
+```
+
+用于判断 Agent 是否按 Skill 的工具链设计执行。
+
+---
+
+### F-18.3 Parameter Accuracy
+
+```text
+Parameter Accuracy = 工具参数断言通过次数 / 工具参数断言总次数
+```
+
+用于判断 Agent 是否能正确抽取距离、单位、数据集等参数。
+
+---
+
+### F-18.4 Clarification Success Rate
+
+```text
+Clarification Success Rate = 需要追问且追问正确的次数 / 需要追问的总次数
+```
+
+用于评估 Actor 多轮交互场景中 Agent 的表现。
+
+---
+
+### F-18.5 GIS Rule Compliance
+
+```text
+GIS Rule Compliance = GIS 规则断言通过次数 / GIS 规则断言总次数
+```
+
+例如：
+
+- 不在 EPSG:4326 下直接做米级平面缓冲
+- 面积统计前确认投影坐标系
+- 裁剪结果应在边界范围内
+
+---
+
+## F-19. 数据表建议
+
+如果需要持久化测试任务，可以设计以下表。
+
+### F-19.1 skills
+
+```text
+id
+skill_id
+name
+version
+type
+content
+created_at
+updated_at
+```
+
+---
+
+### F-19.2 scenarios
+
+```text
+id
+scenario_id
+name
+version
+content
+created_at
+updated_at
+```
+
+---
+
+### F-19.3 test_runs
+
+```text
+id
+run_id
+skill_id
+status
+run_config_json
+role_models_json
+total_count
+passed_count
+failed_count
+started_at
+finished_at
+created_at
+```
+
+---
+
+### F-19.4 test_iterations
+
+```text
+id
+iteration_id
+run_id
+scenario_id
+iteration_index
+status
+stage
+duration_ms
+judge_score
+error_type
+error_message
+started_at
+finished_at
+```
+
+---
+
+### F-19.5 tool_calls
+
+```text
+id
+iteration_id
+tool_name
+server_id
+arguments_json
+result_json
+status
+latency_ms
+created_at
+```
+
+---
+
+### F-19.6 assertion_results
+
+```text
+id
+iteration_id
+assertion_type
+target
+expected_json
+actual_json
+passed
+message
+created_at
+```
+
+---
+
+### F-19.7 judge_results
+
+```text
+id
+iteration_id
+score
+passed
+reason
+issues_json
+suggestions_json
+created_at
+```
+
+---
+
+## F-20. 权限和安全注意事项
+
+### F-20.1 API Key 不应前端明文保存
+
+前端只传 `api_key_ref`，实际 API Key 存在后端配置或密钥管理系统中。
+
+---
+
+### F-20.2 Skill 和 Scenario 上传需要校验
+
+防止上传恶意脚本。
+
+MVP 阶段建议只允许：
+
+```text
+.yml
+.yaml
+.md
+.txt
+.json
+```
+
+不要执行上传文件中的任意代码。
+
+---
+
+### F-20.3 Tool Response 可脱敏
+
+如果工具返回大数据或敏感字段，报告中可以只保存摘要。
+
+---
+
+### F-20.4 大文件数据上传限制
+
+Fixture 数据可能很大，前端应限制大小，或改为选择服务器已有数据路径 / 数据集 ID。
+
+---
+
+## F-21. MVP 实现优先级
+
+### F-21.1 第一阶段：单页控制台
+
+实现：
+
+- Skill 上传
+- Scenario 上传
+- 模型角色配置
+- Run Config 配置
+- Start Run
+- Polling 获取运行状态
+- 基础统计卡片
+- 单次详情查看
+
+---
+
+### F-21.2 第二阶段：实时进度和图表
+
+实现：
+
+- SSE 实时事件
+- 进度条
+- Tool Call 时间线
+- Assertion 表格
+- 失败原因图表
+- 通过率趋势图
+
+---
+
+### F-21.3 第三阶段：管理能力
+
+实现：
+
+- Skill Repository 管理
+- Scenario Repository 管理
+- Model Provider 管理
+- MCP Server 管理
+- 历史报告管理
+
+---
+
+### F-21.4 第四阶段：高级分析
+
+实现：
+
+- Skill 版本对比
+- 不同模型配置对比
+- 失败样本聚类
+- Judge 结果趋势
+- 自动生成优化建议
+
+---
+
+## F-22. 推荐首版页面布局
+
+首版页面可以做成上下结构：
+
+```text
+┌──────────────────────────────────────────────┐
+│ Header: GeoSkillBench Console                │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────┬───────────────────────┐
+│ Skill Upload          │ Scenario Selection     │
+├──────────────────────┼───────────────────────┤
+│ MCP Tool Check        │ Model Role Config      │
+├──────────────────────┴───────────────────────┤
+│ Run Configuration                            │
+├──────────────────────────────────────────────┤
+│ Run Progress                                 │
+├──────────────────────────────────────────────┤
+│ Statistics & Charts                          │
+├──────────────────────────────────────────────┤
+│ Iteration Detail Table                       │
+└──────────────────────────────────────────────┘
+```
+
+---
+
+## F-23. 结论
+
+前端控制台的核心价值是：
+
+```text
+把 Agent Skill 测试从命令行工具升级为可配置、可观察、可分析的测试工作台。
+```
+
+重点能力包括：
+
+```text
+上传 Skill
+选择 Scenario
+配置 Agent / Actor / Judge 模型
+设置测试次数和并发
+启动测试
+实时查看进度
+可视化统计结果
+定位失败原因
+导出测试报告
+```
+
+该前端与后端 GeoSkillBench 的核心测试流程结合后，可以形成完整的 GIS Agent Skill 研发、调试、回归测试和质量评估平台。
+
+---
+
+# 第三部分：合并后的整体实现建议
+
+## 1. 总体实现顺序
+
+建议按照以下顺序实现：
+
+```text
+1. 后端数据模型
+2. Scenario / Skill 加载与校验
+3. MCP Server 连接与 Tool 检查
+4. Test Runner 主流程
+5. Agent / Actor / Judge Runtime
+6. Assertion Engine
+7. Report Generator
+8. 前端 Skill / Scenario 上传页面
+9. 前端模型角色配置页面
+10. 前端测试运行与实时进度
+11. 前端统计图表和详情页
+```
+
+---
+
+## 2. MVP 最小闭环
+
+MVP 版本建议先实现一个完整闭环：
+
+```text
+上传 Skill
+  ↓
+上传 Scenario
+  ↓
+检查 MCP Tools
+  ↓
+配置 Agent / Actor / Judge 模型
+  ↓
+设置测试次数
+  ↓
+开始测试
+  ↓
+实时查看进度
+  ↓
+查看 Assertion / Judge 结果
+  ↓
+下载 Markdown / JSON 报告
+```
+
+---
+
+## 3. 推荐后端服务结构
+
+```text
+backend/
+├── app/
+│   ├── main.py
+│   ├── api/
+│   │   ├── skills.py
+│   │   ├── scenarios.py
+│   │   ├── mcp.py
+│   │   ├── models.py
+│   │   └── test_runs.py
+│   ├── core/
+│   │   ├── runner.py
+│   │   ├── test_context.py
+│   │   └── recorder.py
+│   ├── loader/
+│   │   ├── scenario_loader.py
+│   │   └── skill_loader.py
+│   ├── mcp/
+│   │   └── adapter.py
+│   ├── runtime/
+│   │   ├── agent_runtime.py
+│   │   ├── actor_runtime.py
+│   │   └── judge_runtime.py
+│   ├── assertions/
+│   │   ├── engine.py
+│   │   └── builtin.py
+│   ├── reports/
+│   │   └── generator.py
+│   └── models/
+│       ├── scenario.py
+│       ├── skill.py
+│       ├── run.py
+│       └── result.py
+```
+
+---
+
+## 4. 推荐前端服务结构
+
+```text
+frontend/
+├── src/
+│   ├── pages/
+│   │   ├── SkillTestConsole.tsx
+│   │   ├── TestRunDetail.tsx
+│   │   └── Reports.tsx
+│   ├── components/
+│   │   ├── skill/
+│   │   ├── scenario/
+│   │   ├── mcp/
+│   │   ├── model/
+│   │   ├── run/
+│   │   ├── charts/
+│   │   └── detail/
+│   ├── api/
+│   │   ├── skills.ts
+│   │   ├── scenarios.ts
+│   │   ├── mcp.ts
+│   │   ├── models.ts
+│   │   └── testRuns.ts
+│   ├── stores/
+│   │   └── testConsoleStore.ts
+│   └── types/
+│       ├── skill.ts
+│       ├── scenario.ts
+│       ├── model.ts
+│       ├── run.ts
+│       └── report.ts
+```
+
+---
+
+## 5. 给代码生成工具的实现提示
+
+实现时优先保证以下能力：
+
+1. 所有 YAML / JSON 配置都使用 Pydantic 或 TypeScript 类型进行校验。
+2. Test Run 要有明确状态机，不要只用一个字符串记录状态。
+3. MCP Tool 调用必须经过统一 wrapper，方便记录 tool_calls。
+4. Agent、Actor、Judge 的模型配置必须彼此独立。
+5. 测试任务需要支持 iterations，即同一场景重复执行多次。
+6. 前端运行中状态建议通过 SSE 实时推送。
+7. 报告至少支持 JSON 和 Markdown。
+8. API Key 不要在前端明文保存，前端只传 apiKeyRef。
+9. Assertion Engine 先实现基础断言，再扩展 GIS 空间断言。
+10. Judge 只作为辅助评估，最终结果应结合 required assertions 和 judge_score。
+
+---
+
+# 第四部分：技术实现与选型补充
+
+## 1. 技术选型结论
+
+GeoSkillBench 的推荐技术实现如下：
+
+```text
+后端主语言：Python
+后端 Web 框架：FastAPI
+Agent 编排：LangChain + LangGraph
+MCP 工具接入：langchain-mcp-adapters / 自定义 MCP Adapter
+前端框架：React + TypeScript + Vite
+前端 UI：Ant Design / Semi Design / shadcn/ui
+图表可视化：ECharts
+状态管理：TanStack Query + Zustand
+实时进度：SSE，后续可扩展 WebSocket
+数据库：PostgreSQL
+后台任务：MVP 用 asyncio / BackgroundTasks，后续可扩展 Celery / Dramatiq / RQ + Redis
+GIS 校验：GeoPandas + Shapely + PyProj
+报告生成：JSON + Markdown + HTML/Jinja2
+```
+
+核心判断：
+
+```text
+1. 后端建议采用 Python + FastAPI。
+2. Agent 编排第一版建议采用 LangChain / LangGraph。
+3. nanobot 可以作为可选 Agent Backend，但不建议第一版作为核心运行框架。
+4. 前端采用 React + TypeScript + Vite 是合适的。
+```
+
+---
+
+## 2. 后端为什么使用 Python + FastAPI
+
+GeoSkillBench 后端需要同时处理：
+
+```text
+1. YAML / JSON 配置解析
+2. Agent Skill 加载
+3. MCP Tool 连接和调用
+4. LLM Agent 编排
+5. Actor / Judge 多角色模型调用
+6. GIS 空间数据校验
+7. 测试任务状态管理
+8. 报告生成
+9. 前端 API 和实时事件推送
+```
+
+Python 更适合这个系统，原因包括：
+
+```text
+1. Agent 生态成熟：LangChain、LangGraph、OpenAI-compatible 客户端、MCP 适配生态更丰富。
+2. GIS 处理方便：GeoPandas、Shapely、PyProj 适合做空间断言和结果校验。
+3. 配置建模方便：Pydantic 适合定义 Scenario、Skill、RunConfig、TestContext。
+4. 报告生成方便：Jinja2、Markdown、JSON 生成简单。
+5. 与 GPUStack、vLLM、Ollama、OpenAI-compatible 服务集成成本低。
+```
+
+推荐基础后端栈：
+
+```text
+FastAPI
+Pydantic
+PyYAML
+LangChain
+LangGraph
+httpx
+SQLAlchemy / SQLModel
+PostgreSQL
+GeoPandas
+Shapely
+PyProj
+Jinja2
+```
+
+MVP 阶段可先不引入复杂任务队列，使用 FastAPI + asyncio task manager 跑测试任务。后续如果需要并发执行大量测试，再引入 Celery、Dramatiq 或 RQ。
+
+---
+
+## 3. Agent 编排为什么优先使用 LangChain / LangGraph
+
+GeoSkillBench 不是普通聊天机器人，而是一个测试执行平台。它需要控制完整流程：
+
+```text
+LOAD_SCENARIO
+  ↓
+PREPARE_DATA
+  ↓
+CONNECT_MCP
+  ↓
+LOAD_SKILL
+  ↓
+RUN_AGENT
+  ↓
+RUN_ASSERTIONS
+  ↓
+RUN_JUDGE
+  ↓
+GENERATE_REPORT
+  ↓
+CLEANUP
+```
+
+同时，在 `RUN_AGENT` 阶段还需要支持多轮交互：
+
+```text
+Agent 输出
+  ↓
+是否需要用户补充？
+  ├── 是：Actor 生成回复，再回到 Agent
+  └── 否：收集结果，进入断言和 Judge
+```
+
+LangChain / LangGraph 的分工建议如下：
+
+```text
+LangChain：
+  - LLM 调用
+  - Tool 定义和调用
+  - OpenAI-compatible 模型接入
+  - 结构化输出
+  - Agent / Actor / Judge 的 Prompt 组装
+
+LangGraph：
+  - 测试流程状态机
+  - Agent / Actor / Judge 多节点编排
+  - max_turns 控制
+  - 失败分支处理
+  - 可观测的执行状态
+```
+
+因此第一版建议直接实现：
+
+```text
+LangGraphAgentBackend
+```
+
+它负责执行被测 Agent，并和 Actor、Judge、Tool Registry、Execution Recorder 协同。
+
+---
+
+## 4. nanobot 的定位
+
+`HKUDS/nanobot` 可以关注，但不建议在 MVP 阶段作为 GeoSkillBench 的核心运行框架。
+
+nanobot 更适合作为：
+
+```text
+轻量级 Agent Runtime
+```
+
+它的优势包括：
+
+```text
+1. Agent loop 轻量，代码容易理解。
+2. 支持 MCP。
+3. 支持 memory / skills / channels 等概念。
+4. 有 WebUI 和部署路径。
+5. 适合快速搭建一个通用 Agent。
+```
+
+但是 GeoSkillBench 的核心目标不是构建一个通用 Agent，而是构建一个测试平台。它需要强控制：
+
+```text
+1. Scenario 管理
+2. Fixture 数据导入和清理
+3. MCP required / optional tools 检查
+4. Agent Skill 加载和版本管理
+5. Agent / Actor / Judge 三角色独立模型配置
+6. iterations 重复测试
+7. Tool Call 完整记录
+8. Assertion Engine
+9. Judge Engine
+10. 报告和统计
+11. 前端实时进度
+```
+
+这些测试平台能力不应该过度绑定到某个通用 Agent 框架。
+
+---
+
+## 5. 推荐设计：AgentBackend 抽象层
+
+为了兼容未来不同 Agent Runtime，建议定义统一的 `AgentBackend` 抽象接口。
+
+```python
+class AgentBackend:
+    async def run(self, request: AgentRunRequest) -> AgentRunResult:
+        raise NotImplementedError
+```
+
+然后第一版实现：
+
+```text
+LangGraphAgentBackend
+```
+
+后续可选实现：
+
+```text
+NanobotAgentBackend
+AgentXAgentBackend
+CustomAgentBackend
+```
+
+整体结构：
+
+```text
+GeoSkillBench Runner
+  ↓
+AgentBackend Interface
+  ├── LangGraphAgentBackend      MVP 主实现
+  ├── NanobotAgentBackend        后续可选
+  ├── AgentXAgentBackend         后续可选
+  └── CustomAgentBackend         后续可选
+```
+
+这样可以让 GeoSkillBench 保持平台独立性，不被某一个 Agent 框架锁死。
+
+---
+
+## 6. nanobot 的合适接入方式
+
+### 6.1 作为可选被测 Agent Backend
+
+Scenario 或 RunConfig 可以增加：
+
+```yaml
+runtime:
+  agent_backend: langgraph
+```
+
+未来可以支持：
+
+```yaml
+runtime:
+  agent_backend: nanobot
+```
+
+这样可以测试同一个 Agent Skill 在不同 Agent Runtime 下的表现。
+
+例如：
+
+```text
+gis_buffer_analysis skill
+  ├── LangGraph Runtime pass rate: 92%
+  └── Nanobot Runtime pass rate: 84%
+```
+
+这可以成为 GeoSkillBench 的一个高级评测能力。
+
+---
+
+### 6.2 借鉴 nanobot 的轻量 Agent Loop
+
+即使不直接依赖 nanobot，也可以借鉴它的设计：
+
+```text
+1. 小型 agent loop
+2. MCP tools
+3. skill 按需加载
+4. memory / context 注入
+5. 实时 progress streaming
+```
+
+但 GeoSkillBench 的核心执行流、断言、报告、统计仍然建议由自己的 Runner 控制。
+
+---
+
+### 6.3 不建议第一版直接基于 nanobot 构建整个后端
+
+不推荐做成：
+
+```text
+GeoSkillBench = nanobot 插件
+```
+
+原因是：
+
+```text
+1. 测试平台能力与通用 Agent 框架耦合过深。
+2. Fixture、Assertion、Judge、Report 等能力不一定符合 nanobot 的核心模型。
+3. 后续如果要支持 LangGraph、AgentX 或自研 Agent Runtime，会更难抽象。
+```
+
+更推荐：
+
+```text
+GeoSkillBench 自己作为测试平台
+nanobot 作为其中一个可选 Agent Runtime
+```
+
+---
+
+## 7. 前端为什么使用 React + TypeScript + Vite
+
+GeoSkillBench 前端是一个测试控制台，需要支持：
+
+```text
+1. Skill 文件上传和预览
+2. Scenario 上传和选择
+3. MCP Server / Tool 检查
+4. Agent / Actor / Judge 三角色模型配置
+5. 测试次数、并发数、max_turns、timeout 配置
+6. 实时测试进度
+7. 对话记录查看
+8. Tool Call 时间线
+9. Assertion 明细表
+10. Judge 结果展示
+11. 统计图表
+12. 报告下载
+```
+
+React + TypeScript + Vite 适合这类前端控制台。
+
+推荐前端栈：
+
+```text
+React
+TypeScript
+Vite
+Ant Design / Semi Design / shadcn/ui
+ECharts
+TanStack Query
+Zustand
+Monaco Editor
+SSE EventSource
+```
+
+各组件作用：
+
+```text
+TanStack Query：
+  管理 API 请求、缓存、刷新、轮询。
+
+Zustand：
+  管理测试控制台本地状态，例如当前 Skill、Scenario、模型配置、RunConfig。
+
+ECharts：
+  展示通过率趋势、失败原因分布、Tool Call 统计、Judge 分数分布。
+
+Monaco Editor：
+  用于预览和编辑 YAML / Skill Prompt。
+
+SSE EventSource：
+  接收后端测试运行事件，实时更新进度。
+```
+
+如果团队已有 Vue 生态，也可以使用 Vue 3 + TypeScript + Vite；但从代码生成工具和通用生态角度，React + TypeScript 更合适。
+
+---
+
+## 8. 推荐整体技术架构
+
+```text
+Frontend
+  React + TypeScript + Vite
+  Ant Design / Semi Design
+  ECharts
+  TanStack Query
+  Zustand
+  Monaco Editor
+  SSE EventSource
+
+Backend API
+  Python + FastAPI
+  Pydantic
+  SQLModel / SQLAlchemy
+  PostgreSQL
+  SSE endpoints
+
+Test Execution
+  TestRunner
+  Stage State Machine
+  ExecutionRecorder
+  AssertionEngine
+  JudgeEngine
+  ReportGenerator
+
+Agent Runtime
+  AgentBackend Interface
+  LangGraphAgentBackend
+  NanobotAgentBackend，可选
+  AgentXAgentBackend，可选
+
+MCP Integration
+  Existing GIS MCP Servers
+  Tool Discovery
+  Required / Optional Tool Validation
+  Tool Call Wrapper
+  Tool Call Recorder
+
+GIS Validation
+  GeoPandas
+  Shapely
+  PyProj
+
+Task Queue
+  MVP: asyncio task manager
+  Later: Celery / Dramatiq / RQ + Redis
+
+Storage
+  PostgreSQL
+  Local file storage / object storage for uploaded Skill, Scenario, report and fixtures
+```
+
+---
+
+## 9. 后端目录结构补充
+
+推荐后端结构：
+
+```text
+backend/
+├── app/
+│   ├── main.py
+│   ├── api/
+│   │   ├── skills.py
+│   │   ├── scenarios.py
+│   │   ├── mcp.py
+│   │   ├── models.py
+│   │   └── test_runs.py
+│   ├── core/
+│   │   ├── runner.py
+│   │   ├── stage.py
+│   │   ├── test_context.py
+│   │   └── recorder.py
+│   ├── backends/
+│   │   ├── base.py
+│   │   ├── langgraph_backend.py
+│   │   ├── nanobot_backend.py
+│   │   └── agentx_backend.py
+│   ├── loader/
+│   │   ├── scenario_loader.py
+│   │   └── skill_loader.py
+│   ├── mcp/
+│   │   ├── adapter.py
+│   │   ├── tool_registry.py
+│   │   └── tool_wrapper.py
+│   ├── runtime/
+│   │   ├── actor_runtime.py
+│   │   └── judge_runtime.py
+│   ├── assertions/
+│   │   ├── engine.py
+│   │   ├── builtin.py
+│   │   └── gis_assertions.py
+│   ├── reports/
+│   │   ├── generator.py
+│   │   └── templates/
+│   ├── storage/
+│   │   ├── db.py
+│   │   ├── repositories.py
+│   │   └── file_store.py
+│   └── models/
+│       ├── scenario.py
+│       ├── skill.py
+│       ├── run.py
+│       ├── result.py
+│       └── model_config.py
+```
+
+---
+
+## 10. 前端目录结构补充
+
+推荐前端结构：
+
+```text
+frontend/
+├── src/
+│   ├── main.tsx
+│   ├── App.tsx
+│   ├── pages/
+│   │   ├── SkillTestConsole.tsx
+│   │   ├── TestRunDetail.tsx
+│   │   ├── Reports.tsx
+│   │   ├── Skills.tsx
+│   │   ├── Scenarios.tsx
+│   │   └── Settings.tsx
+│   ├── components/
+│   │   ├── skill/
+│   │   │   ├── SkillUploader.tsx
+│   │   │   └── SkillPreview.tsx
+│   │   ├── scenario/
+│   │   │   ├── ScenarioUploader.tsx
+│   │   │   ├── ScenarioSelector.tsx
+│   │   │   └── ScenarioPreview.tsx
+│   │   ├── mcp/
+│   │   │   ├── MCPServerStatus.tsx
+│   │   │   └── MCPToolCheckPanel.tsx
+│   │   ├── model/
+│   │   │   ├── RoleModelConfigPanel.tsx
+│   │   │   └── ModelConnectionTester.tsx
+│   │   ├── run/
+│   │   │   ├── RunConfigForm.tsx
+│   │   │   ├── RunProgressPanel.tsx
+│   │   │   └── RunActionBar.tsx
+│   │   ├── charts/
+│   │   │   ├── PassRateChart.tsx
+│   │   │   ├── FailureReasonChart.tsx
+│   │   │   ├── ToolStatsChart.tsx
+│   │   │   └── JudgeScoreChart.tsx
+│   │   └── detail/
+│   │       ├── ConversationViewer.tsx
+│   │       ├── ToolCallTimeline.tsx
+│   │       ├── AssertionResultTable.tsx
+│   │       └── JudgeResultPanel.tsx
+│   ├── api/
+│   │   ├── client.ts
+│   │   ├── skills.ts
+│   │   ├── scenarios.ts
+│   │   ├── mcp.ts
+│   │   ├── models.ts
+│   │   └── testRuns.ts
+│   ├── stores/
+│   │   └── testConsoleStore.ts
+│   └── types/
+│       ├── skill.ts
+│       ├── scenario.ts
+│       ├── model.ts
+│       ├── run.ts
+│       └── report.ts
+```
+
+---
+
+## 11. AgentBackend 接口设计
+
+### 11.1 AgentRunRequest
+
+```python
+from pydantic import BaseModel
+from typing import Any, Literal
+
+class RoleModelConfig(BaseModel):
+    provider: str
+    model: str
+    base_url: str | None = None
+    api_key_ref: str | None = None
+    temperature: float = 0.2
+    max_tokens: int = 4096
+    timeout_seconds: int = 180
+
+class AgentRunRequest(BaseModel):
+    scenario_id: str
+    user_task: str
+    skill_prompt: str
+    test_context: dict[str, Any]
+    tools: list[Any]
+    role_model_config: RoleModelConfig
+    max_turns: int = 6
+```
+
+---
+
+### 11.2 AgentRunResult
+
+```python
+class ToolCallRecord(BaseModel):
+    tool_name: str
+    arguments: dict[str, Any]
+    result: dict[str, Any] | None = None
+    status: Literal["success", "failed"]
+    latency_ms: int | None = None
+    error_message: str | None = None
+
+class AgentRunResult(BaseModel):
+    final_response: str
+    tool_calls: list[ToolCallRecord]
+    conversation: list[dict[str, Any]]
+    output_artifacts: dict[str, Any] = {}
+    status: Literal["passed", "failed", "timeout"]
+    error_message: str | None = None
+```
+
+---
+
+### 11.3 Backend Interface
+
+```python
+class AgentBackend:
+    async def run(self, request: AgentRunRequest) -> AgentRunResult:
+        raise NotImplementedError
+```
+
+---
+
+## 12. LangGraphAgentBackend 实现思路
+
+LangGraphAgentBackend 可以包含以下节点：
+
+```text
+prepare_agent_context
+  ↓
+agent_turn
+  ↓
+need_actor?
+  ├── yes → actor_turn → agent_turn
+  └── no  → collect_result
+  ↓
+finish
+```
+
+但也可以把 Actor 放在 TestRunner 里控制，AgentBackend 只负责单次 Agent 执行。MVP 阶段建议采用简单方式：
+
+```text
+TestRunner 控制多轮
+AgentBackend 只执行 Agent 一轮或一次完整 tool-calling loop
+ActorRuntime 单独生成用户回复
+JudgeEngine 单独执行评估
+```
+
+这样模块边界更清晰：
+
+```text
+TestRunner
+  ├── AgentBackend.run()
+  ├── ActorRuntime.reply()
+  ├── AssertionEngine.run()
+  └── JudgeEngine.evaluate()
+```
+
+---
+
+## 13. 模型配置策略
+
+系统需要支持 Agent、Actor、Judge 三类角色分别配置模型。
+
+```text
+Agent：
+  负责执行被测 GIS 任务。
+  建议 temperature 0.1 - 0.3。
+
+Actor：
+  负责模拟用户交互。
+  建议 temperature 0.3 - 0.7。
+
+Judge：
+  负责评估执行结果。
+  建议 temperature 0.0 - 0.2。
+```
+
+配置结构：
+
+```yaml
+role_models:
+  agent:
+    provider: openai_compatible
+    model: qwen3.5-32b
+    base_url: http://localhost:3080/v1
+    api_key_ref: gpustack_default
+    temperature: 0.2
+    max_tokens: 4096
+
+  actor:
+    enabled: true
+    provider: openai_compatible
+    model: qwen3.5-14b
+    base_url: http://localhost:3080/v1
+    api_key_ref: gpustack_default
+    temperature: 0.5
+
+  judge:
+    enabled: true
+    provider: openai_compatible
+    model: qwen3.5-32b
+    base_url: http://localhost:3080/v1
+    api_key_ref: gpustack_default
+    temperature: 0.0
+```
+
+---
+
+## 14. 任务执行方式
+
+### 14.1 MVP 阶段
+
+MVP 可以在 FastAPI 内部使用 asyncio task manager：
+
+```text
+POST /api/test-runs
+  ↓
+创建 TestRun 记录
+  ↓
+创建 asyncio task
+  ↓
+立即返回 run_id
+  ↓
+前端通过 SSE 订阅进度
+```
+
+适合：
+
+```text
+1. 单机部署
+2. 并发不高
+3. 内部研发测试
+```
+
+---
+
+### 14.2 后续扩展
+
+当需要更高并发、任务重试和分布式执行时，引入：
+
+```text
+Redis + Celery
+或
+Redis + Dramatiq
+或
+RQ
+```
+
+任务队列负责：
+
+```text
+1. 测试任务排队
+2. 并发控制
+3. 任务取消
+4. 失败重试
+5. 分布式 worker
+```
+
+---
+
+## 15. API 与后端实现关系
+
+前端 API 应该对应后端核心模块：
+
+```text
+/api/skills/upload
+  → SkillLoader + FileStore
+
+/api/scenarios/upload
+  → ScenarioLoader + FileStore
+
+/api/mcp/check
+  → MCPToolAdapter
+
+/api/models/test
+  → ModelClientFactory
+
+/api/test-runs
+  → TestRunner
+
+/api/test-runs/{run_id}/events
+  → RunEventStream / SSE
+
+/api/test-runs/{run_id}/stats
+  → Report / Metrics Service
+
+/api/test-runs/{run_id}/reports/*
+  → ReportGenerator
+```
+
+---
+
+## 16. 实现优先级更新
+
+### 第一阶段：后端最小闭环
+
+```text
+1. FastAPI 项目初始化
+2. Pydantic 数据模型
+3. Skill / Scenario 上传和解析
+4. MCP Tool 检查
+5. LangGraphAgentBackend 基础实现
+6. TestRunner 串通单个场景
+7. 基础 Assertions
+8. JSON / Markdown 报告
+```
+
+---
+
+### 第二阶段：前端控制台 MVP
+
+```text
+1. React + TypeScript + Vite 项目初始化
+2. Skill 上传
+3. Scenario 上传
+4. 模型角色配置
+5. RunConfig 表单
+6. 开始测试
+7. 运行状态轮询或 SSE
+8. 测试结果表格
+9. 报告下载
+```
+
+---
+
+### 第三阶段：可视化和实时进度
+
+```text
+1. SSE 实时事件
+2. Progress Panel
+3. Tool Call Timeline
+4. AssertionResultTable
+5. JudgeResultPanel
+6. ECharts 统计图表
+```
+
+---
+
+### 第四阶段：高级能力
+
+```text
+1. NanobotAgentBackend
+2. AgentXAgentBackend
+3. Skill 版本对比
+4. 不同模型组合对比
+5. 历史趋势分析
+6. 失败样本聚类
+7. 自动生成 Skill 优化建议
+```
+
+---
+
+## 17. 最终技术路线总结
+
+GeoSkillBench 不应该只是一个 Agent Demo，而应该是一个独立的测试平台。
+
+推荐路线：
+
+```text
+GeoSkillBench Core：
+  自己实现 Scenario、Skill、Fixture、MCP、Assertion、Judge、Report 和 Run 管理。
+
+Agent Runtime：
+  第一版使用 LangChain / LangGraph。
+  后续通过 AgentBackend 接口支持 nanobot、AgentX 或其他 Runtime。
+
+Frontend Console：
+  使用 React + TypeScript + Vite。
+  支持上传 Skill、选择 Scenario、配置模型角色、执行测试和查看可视化结果。
+```
+
+最终形成：
+
+```text
+测试平台能力稳定
+  +
+Agent Runtime 可插拔
+  +
+前端控制台可观察
+  =
+可持续演进的 GIS Agent Skill 自动化测试平台
+```

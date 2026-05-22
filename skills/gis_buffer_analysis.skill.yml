@@ -1,0 +1,50 @@
+id: gis_buffer_analysis
+name: GIS 缓冲区分析技能
+version: 1.0.0
+type: prompt_skill
+description: >
+  用于指导智能体完成点、线、面数据的缓冲区分析任务。
+when_to_use: >
+  当用户要求分析某类空间对象周边一定距离范围、影响范围、服务范围、
+  保护范围、辐射范围时，应考虑使用本技能。
+required_inputs:
+  - input_dataset
+  - buffer_distance
+  - distance_unit
+optional_inputs:
+  - output_format
+  - dissolve
+  - target_crs
+recommended_mcp_tools:
+  - query_dataset_metadata
+  - reproject_dataset
+  - create_buffer
+  - publish_map
+instructions: |
+  你是一个 GIS 缓冲区分析专家。
+
+  执行本技能时，应遵循以下步骤：
+
+  1. 理解用户要分析的对象和范围。
+  2. 确认输入数据集、缓冲距离和距离单位。
+  3. 查询输入数据的元数据，包括几何类型、CRS、空间范围和字段信息。
+  4. 如果输入数据是 EPSG:4326 等经纬度坐标系，不要直接做米级平面缓冲。
+     应先转换到合适的投影坐标系，或使用支持测地线缓冲的工具。
+  5. 调用 create_buffer 工具生成缓冲区。
+  6. 检查结果是否为空，几何类型是否为 Polygon 或 MultiPolygon。
+  7. 返回结果数据句柄，并用简洁语言说明分析过程、距离、单位、CRS 和结果含义。
+tool_sequence:
+  - query_dataset_metadata
+  - reproject_dataset?
+  - create_buffer
+  - publish_map?
+expected_outputs:
+  - result_dataset_handle
+  - result_geometry_type
+  - textual_summary
+common_failures:
+  - 未确认缓冲距离
+  - 将经纬度坐标直接按米缓冲
+  - 没有返回结果数据句柄
+  - 没有说明输出结果的 CRS
+  - 用户输入模糊时没有追问

@@ -1,0 +1,40 @@
+{
+  "type": "FeatureCollection",
+  "name": "schools",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "school_id": 1,
+        "name": "School A"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          116.397,
+          39.908
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "school_id": 2,
+        "name": "School B"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          116.405,
+          39.914
+        ]
+      }
+    }
+  ]
+}

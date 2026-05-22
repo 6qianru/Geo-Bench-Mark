@@ -1,0 +1,53 @@
+{
+  "id": "gis-vector-analysis",
+  "name": "矢量空间分析技能",
+  "version": "1.0.0",
+  "type": "prompt_skill_package",
+  "category": "gis",
+  "entry": "SKILL.md",
+  "description": "用于处理缓冲区、查询和结果展示等矢量空间分析任务。",
+  "references_dir": "references",
+  "assumptions": [
+    "缓冲区分析在米制投影坐标系中执行"
+  ],
+  "recommended_tools": [
+    "query_dataset_metadata",
+    "reproject_dataset",
+    "create_buffer"
+  ],
+  "references": [
+    {
+      "id": "plan",
+      "path": "references/S0_执行计划.md",
+      "title": "执行计划",
+      "required": true,
+      "tags": ["plan", "workflow"]
+    },
+    {
+      "id": "data-confirmation",
+      "path": "references/00_数据确认.md",
+      "title": "数据确认",
+      "required": true,
+      "tags": ["data", "metadata"]
+    },
+    {
+      "id": "buffer",
+      "path": "references/01_缓冲区分析.md",
+      "title": "缓冲区分析",
+      "tags": ["buffer"],
+      "trigger_keywords": ["周边", "缓冲区", "服务范围", "影响范围"]
+    },
+    {
+      "id": "result-display",
+      "path": "references/10_结果展示.md",
+      "title": "结果展示",
+      "tags": ["result", "output"]
+    },
+    {
+      "id": "erase",
+      "path": "references/05_擦除分析.md",
+      "title": "擦除分析",
+      "tags": ["erase"]
+    }
+  ]
+}

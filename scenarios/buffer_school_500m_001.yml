@@ -1,0 +1,124 @@
+id: buffer_school_500m_001
+name: 学校周边 500 米缓冲区分析
+version: 1.0.0
+type: agent_skill_test
+description: >
+  测试 gis_buffer_analysis 技能是否能够引导智能体正确调用 MCP 工具，
+  完成学校点数据的 500 米缓冲区分析。
+target:
+  skill_id: gis_buffer_analysis
+  skill_version: 1.0.0
+runtime:
+  executor: langgraph
+  agent_model: rule-based-agent
+  actor_model: rule-based-actor
+  judge_model: rule-based-judge
+  max_turns: 6
+  timeout_seconds: 180
+  memory_enabled: false
+data:
+  fixtures:
+    - id: schools
+      name: 学校点数据
+      type: vector
+      format: geojson
+      path: ../fixtures/schools.geojson
+      crs: EPSG:4326
+      geometry_type: Point
+      import_as: dataset
+      register_metadata: true
+      cleanup: true
+mcp:
+  servers:
+    - id: gpa_vector
+      name: GPA 矢量分析 MCP 服务
+      transport: mock
+      url: mock://vector
+      required: true
+    - id: metadata
+      name: 空间元数据 MCP 服务
+      transport: mock
+      url: mock://metadata
+      required: true
+  tools:
+    required:
+      - server: metadata
+        name: query_dataset_metadata
+      - server: gpa_vector
+        name: create_buffer
+    optional:
+      - server: gpa_vector
+        name: reproject_dataset
+      - server: gpa_vector
+        name: publish_map
+skill:
+  load_mode: file
+  path: ../skills/gis_buffer_analysis.skill.yml
+  required: true
+user_task: >
+  请帮我生成 schools 数据周边 500 米的服务范围。
+actor:
+  enabled: true
+  profile: normal_user
+  max_turns: 5
+  goal: >
+    如果智能体询问使用哪个数据，请回答使用 schools 数据。
+    如果智能体询问缓冲距离，请回答 500 米。
+    如果智能体询问输出格式，请回答 GeoJSON。
+    不要主动提供未被询问的信息。
+expected_behavior:
+  should_load_skills:
+    - gis_buffer_analysis
+  should_call_tools:
+    - query_dataset_metadata
+    - create_buffer
+  optional_tools:
+    - reproject_dataset
+    - publish_map
+  should_not:
+    - 直接在 EPSG:4326 下按米做平面缓冲
+    - 编造不存在的数据字段
+    - 在缺少输入数据时直接执行
+assertions:
+  - type: skill_loaded
+    skill_id: gis_buffer_analysis
+  - type: tool_available
+    tool: query_dataset_metadata
+  - type: tool_available
+    tool: create_buffer
+  - type: tool_called
+    tool: query_dataset_metadata
+  - type: tool_called
+    tool: create_buffer
+  - type: tool_sequence
+    sequence:
+      - query_dataset_metadata
+      - create_buffer
+  - type: tool_argument_equals
+    tool: create_buffer
+    argument: distance
+    value: 500
+  - type: result_dataset_exists
+    alias: buffer_result
+  - type: result_geometry_type_in
+    target: buffer_result
+    values:
+      - Polygon
+      - MultiPolygon
+  - type: final_response_contains
+    values:
+      - "500"
+      - "缓冲区"
+      - "结果数据"
+judge:
+  enabled: true
+  rubric:
+    - 是否正确识别为缓冲区分析任务
+    - 是否加载了 gis_buffer_analysis skill
+    - 是否正确使用 schools 数据
+    - 是否正确调用 query_dataset_metadata 和 create_buffer
+    - 是否合理处理 EPSG:4326 与米级缓冲问题
+    - 最终回答是否包含结果数据句柄、缓冲距离和简要说明
+pass_criteria:
+  required_assertions_passed: true
+  judge_score_min: 0.8

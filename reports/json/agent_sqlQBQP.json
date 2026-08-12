@@ -1,0 +1,77 @@
+{
+  "scenario_id": "agent_sqlQBQP",
+  "scenario_name": "外部智能体-sqlQBQP",
+  "status": "passed",
+  "duration_ms": 17500,
+  "stage_results": {
+    "LOAD_SCENARIO": "PASSED",
+    "PREPARE_DATA": "PASSED",
+    "CONNECT_MCP": "PASSED",
+    "LOAD_SKILL": "SKIPPED",
+    "RUN_AGENT": "PASSED",
+    "RUN_ASSERTIONS": "PASSED",
+    "RUN_JUDGE": "PASSED",
+    "GENERATE_REPORT": "PASSED",
+    "CLEANUP": "PASSED"
+  },
+  "skill": null,
+  "tool_calls": [
+    {
+      "tool_name": "mcp_gpa-mcp-v2-vectoranalyst_intersectDataset",
+      "arguments": {
+        "dataset": "agentx_gpa_demo_sdx_zxcqcslx",
+        "intersectDataset": "agentx_gpa_demo_sdx_北京市",
+        "isRetainAllSourceFields": "true",
+        "tolerance": "0.0"
+      },
+      "result": {
+        "datasetResult": "agentx_gpa_result_sdx_tmp_intersectdataset_260812104810110",
+        "tableName": "tmp_intersectDataset_260812104810110",
+        "datasetResultSvcURL": "http://192.168.13.130:8090/iserver/services/data-gpa-result/rest/data/datasources/gpa_result/datasets/tmp_intersectDataset_260812104810110",
+        "success": true
+      },
+      "status": "success",
+      "latency_ms": null,
+      "error_message": null,
+      "tool_type": "mcp",
+      "recorded_at": "2026-08-12T02:48:20.412689+00:00",
+      "order": 1
+    }
+  ],
+  "assertions": [
+    {
+      "type": "final_response_contains",
+      "passed": true,
+      "message": "Final response contains expected values: ['完成']",
+      "target": null
+    }
+  ],
+  "judge": {
+    "score": 1.0,
+    "passed": true,
+    "reason": "Judge disabled by scenario config.",
+    "issues": [],
+    "suggestions": []
+  },
+  "conversation": [
+    {
+      "role": "user",
+      "content": "对北京市与中心城区求交"
+    },
+    {
+      "role": "assistant",
+      "content": "已完成（第 6 次执行）\"北京市与中心城区求交\"。\n\n本次结果：\n- 结果数据集：agentx_gpa_result_sdx_tmp_intersectdataset_260812104810110\n- 记录数：58 条（REGION，EPSG:4326）\n- 数据服务：http://192.168.13.130:8090/iserver/services/data-gpa-result/rest/data/datasources/gpa_result/datasets/tmp_intersectDataset_260812104810110\n\n口径与结论同前：中心城区绿线 ZXCQCSLX（58 个面）∩ 北京市行政区，全部位于市域内，求交无裁剪，结果 58 条。\n\n提示：同一操作已连续执行 6 次，结果完全一致（58 条）。若您的预期不是这个结果，比如希望得到\"中心城区范围\"本身、用另一个北京市数据（110db_sdx_bjs北京市）、或需要对结果做进一步处理，请直接说明，我按新口径执行。"
+    }
+  ],
+  "final_output": {
+    "final_response": "已完成（第 6 次执行）\"北京市与中心城区求交\"。\n\n本次结果：\n- 结果数据集：agentx_gpa_result_sdx_tmp_intersectdataset_260812104810110\n- 记录数：58 条（REGION，EPSG:4326）\n- 数据服务：http://192.168.13.130:8090/iserver/services/data-gpa-result/rest/data/datasources/gpa_result/datasets/tmp_intersectDataset_260812104810110\n\n口径与结论同前：中心城区绿线 ZXCQCSLX（58 个面）∩ 北京市行政区，全部位于市域内，求交无裁剪，结果 58 条。\n\n提示：同一操作已连续执行 6 次，结果完全一致（58 条）。若您的预期不是这个结果，比如希望得到\"中心城区范围\"本身、用另一个北京市数据（110db_sdx_bjs北京市）、或需要对结果做进一步处理，请直接说明，我按新口径执行。",
+    "executor": "http_agent",
+    "runtime_mode": "compatibility",
+    "runtime_metadata": {
+      "agent_type": "http"
+    },
+    "output_artifacts": {}
+  },
+  "loaded_skill_references": [],
+  "errors": []
+}

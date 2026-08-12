@@ -14,6 +14,13 @@ class JudgeEngine:
         recorder: ExecutionRecorder,
         assertion_result: AssertionResult,
     ) -> JudgeResult:
+        if not scenario.judge.enabled:
+            # 显式关闭 judge 时直接以断言结果通过，跳过针对内部 skill 产物的启发式扣分
+            return JudgeResult(
+                score=assertion_result.score,
+                passed=assertion_result.passed,
+                reason="Judge disabled by scenario config.",
+            )
         issues: list[str] = []
         suggestions: list[str] = []
         score = assertion_result.score

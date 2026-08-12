@@ -1,0 +1,199 @@
+{
+  "scenario_id": "buffer_school_500m_001",
+  "scenario_name": "学校周边 500 米缓冲区分析",
+  "status": "passed",
+  "duration_ms": 19,
+  "stage_results": {
+    "LOAD_SCENARIO": "PASSED",
+    "PREPARE_DATA": "PASSED",
+    "CONNECT_MCP": "PASSED",
+    "LOAD_SKILL": "PASSED",
+    "RUN_AGENT": "PASSED",
+    "RUN_ASSERTIONS": "PASSED",
+    "RUN_JUDGE": "PASSED",
+    "GENERATE_REPORT": "PASSED",
+    "CLEANUP": "PASSED"
+  },
+  "skill": {
+    "id": "gis_buffer_analysis",
+    "name": "GIS 缓冲区分析技能",
+    "type": "prompt_skill",
+    "version": "1.0.0",
+    "loaded": true,
+    "description": "用于指导智能体完成点、线、面数据的缓冲区分析任务。\n",
+    "category": null,
+    "entry_file": null,
+    "base_dir": null,
+    "base_prompt": null,
+    "metadata": {},
+    "references": [],
+    "assumptions": [],
+    "lazy_load_references": false
+  },
+  "tool_calls": [
+    {
+      "tool_name": "query_dataset_metadata",
+      "arguments": {
+        "dataset": "schools"
+      },
+      "result": {
+        "dataset": "schools",
+        "handle": "dataset://test/buffer_school_500m_001/schools",
+        "geometry_type": "Point",
+        "crs": "EPSG:4326",
+        "feature_count": 2,
+        "fields": [
+          "name",
+          "school_id"
+        ]
+      },
+      "status": "success",
+      "latency_ms": null,
+      "error_message": null,
+      "tool_type": "mcp",
+      "recorded_at": "2026-08-12T02:32:55.046089+00:00",
+      "order": 1
+    },
+    {
+      "tool_name": "reproject_dataset",
+      "arguments": {
+        "dataset": "schools",
+        "target_crs": "EPSG:3857",
+        "output_alias": "schools_metric"
+      },
+      "result": {
+        "dataset": "schools_metric",
+        "handle": "dataset://test/buffer_school_500m_001/schools_metric",
+        "crs": "EPSG:3857"
+      },
+      "status": "success",
+      "latency_ms": null,
+      "error_message": null,
+      "tool_type": "mcp",
+      "recorded_at": "2026-08-12T02:32:55.046109+00:00",
+      "order": 2
+    },
+    {
+      "tool_name": "create_buffer",
+      "arguments": {
+        "dataset": "schools_metric",
+        "distance": 500.0,
+        "distance_unit": "meter",
+        "output_alias": "buffer_result"
+      },
+      "result": {
+        "dataset": "buffer_result",
+        "handle": "dataset://generated/buffer_result",
+        "geometry_type": "Polygon",
+        "crs": "EPSG:3857"
+      },
+      "status": "success",
+      "latency_ms": null,
+      "error_message": null,
+      "tool_type": "mcp",
+      "recorded_at": "2026-08-12T02:32:55.046114+00:00",
+      "order": 3
+    }
+  ],
+  "assertions": [
+    {
+      "type": "skill_loaded",
+      "passed": true,
+      "message": "Skill was loaded: gis_buffer_analysis",
+      "target": "gis_buffer_analysis"
+    },
+    {
+      "type": "tool_available",
+      "passed": true,
+      "message": "Tool is available: query_dataset_metadata",
+      "target": "query_dataset_metadata"
+    },
+    {
+      "type": "tool_available",
+      "passed": true,
+      "message": "Tool is available: create_buffer",
+      "target": "create_buffer"
+    },
+    {
+      "type": "tool_called",
+      "passed": true,
+      "message": "Tool was called: query_dataset_metadata",
+      "target": "query_dataset_metadata"
+    },
+    {
+      "type": "tool_called",
+      "passed": true,
+      "message": "Tool was called: create_buffer",
+      "target": "create_buffer"
+    },
+    {
+      "type": "tool_sequence",
+      "passed": true,
+      "message": "Tool sequence matched: ['query_dataset_metadata', 'create_buffer']",
+      "target": "query_dataset_metadata -> create_buffer"
+    },
+    {
+      "type": "tool_argument_equals",
+      "passed": true,
+      "message": "Tool argument matched for create_buffer.distance",
+      "target": "create_buffer"
+    },
+    {
+      "type": "result_dataset_exists",
+      "passed": true,
+      "message": "Result dataset exists: buffer_result",
+      "target": "buffer_result"
+    },
+    {
+      "type": "result_geometry_type_in",
+      "passed": true,
+      "message": "Geometry type matched for buffer_result: Polygon",
+      "target": "buffer_result"
+    },
+    {
+      "type": "final_response_contains",
+      "passed": true,
+      "message": "Final response contains expected values: ['500', '缓冲区', '结果数据']",
+      "target": null
+    }
+  ],
+  "judge": {
+    "score": 1.0,
+    "passed": true,
+    "reason": "智能体按场景完成了主要流程。",
+    "issues": [],
+    "suggestions": []
+  },
+  "conversation": [
+    {
+      "role": "user",
+      "content": "请帮我生成 schools 数据周边 500 米的服务范围。\n"
+    },
+    {
+      "role": "assistant",
+      "content": "[FINAL]\n已完成 schools 数据的 500 米缓冲区分析。 结果数据句柄为 dataset://generated/buffer_result，输出 CRS 为 EPSG:3857。"
+    }
+  ],
+  "final_output": {
+    "final_response": "[FINAL]\n已完成 schools 数据的 500 米缓冲区分析。 结果数据句柄为 dataset://generated/buffer_result，输出 CRS 为 EPSG:3857。",
+    "executor": "langgraph",
+    "runtime_mode": "compatibility",
+    "runtime_metadata": {
+      "runtime_mode": "compatibility",
+      "runtime_available": true,
+      "issue": "Model 'rule-based-agent' is a heuristic compatibility model, so the executor is using the rule-based fallback path.",
+      "model": "rule-based-agent"
+    },
+    "output_artifacts": {
+      "result_dataset": {
+        "dataset": "buffer_result",
+        "handle": "dataset://generated/buffer_result",
+        "geometry_type": "Polygon",
+        "crs": "EPSG:3857"
+      },
+      "executor_note": "Model 'rule-based-agent' is a heuristic compatibility model, so the executor is using the rule-based fallback path."
+    }
+  },
+  "loaded_skill_references": [],
+  "errors": []
+}

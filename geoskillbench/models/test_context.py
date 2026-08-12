@@ -44,6 +44,6 @@ class MCPToolContext(BaseModel):
 class TestContext(BaseModel):
     scenario_id: str
     scenario_name: str
-    skill: SkillContext
+    skill: SkillContext | None = None
     datasets: dict[str, DatasetContext] = Field(default_factory=dict)
     mcp_tools: dict[str, MCPToolContext] = Field(default_factory=dict)

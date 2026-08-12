@@ -44,11 +44,14 @@ class TestRunner:
 
     def validate(self, scenario_path: str) -> dict:
         scenario = self.scenario_loader.load(scenario_path)
-        skill = self.skill_loader.load(scenario.skill, getattr(scenario, "_base_path", "."))
+        skill = None
+        if scenario.type != "agent_test":
+            skill = self.skill_loader.load(scenario.skill, getattr(scenario, "_base_path", "."))
         return {
             "scenario_id": scenario.id,
             "scenario_name": scenario.name,
-            "skill_id": skill.id,
+            "skill_id": skill.id if skill else None,
+            "scenario_type": scenario.type,
             "executor": scenario.runtime.executor,
             "required_tools": [tool.name for tool in scenario.mcp.tools.required],
         }
@@ -104,29 +107,38 @@ class TestRunner:
 
             stage_results["LOAD_SKILL"] = "RUNNING"
             emit("stage", stage="LOAD_SKILL", status="RUNNING", stage_results=dict(stage_results))
-            skill = self.skill_loader.load(scenario.skill, getattr(scenario, "_base_path", "."))
-            recorder.record_skill_load(skill.id)
-            stage_results["LOAD_SKILL"] = "PASSED"
-            emit("stage", stage="LOAD_SKILL", status="PASSED", stage_results=dict(stage_results), skill_id=skill.id)
+            if scenario.type == "agent_test":
+                skill = None
+                stage_results["LOAD_SKILL"] = "SKIPPED"
+                emit("stage", stage="LOAD_SKILL", status="SKIPPED", stage_results=dict(stage_results), reason="agent_test 不加载 skill")
+            else:
+                skill = self.skill_loader.load(scenario.skill, getattr(scenario, "_base_path", "."))
+                recorder.record_skill_load(skill.id)
+                stage_results["LOAD_SKILL"] = "PASSED"
+                emit("stage", stage="LOAD_SKILL", status="PASSED", stage_results=dict(stage_results), skill_id=skill.id)
 
             test_context = TestContext(
                 scenario_id=scenario.id,
                 scenario_name=scenario.name,
-                skill=SkillContext(
-                    id=skill.id,
-                    name=skill.name,
-                    type=skill.type,
-                    version=skill.version,
-                    loaded=True,
-                    description=skill.description,
-                    category=skill.category,
-                    entry_file=skill.entry_file,
-                    base_dir=skill.base_dir,
-                    base_prompt=skill.base_prompt,
-                    metadata=skill.metadata,
-                    references=[reference.model_dump() for reference in skill.references],
-                    assumptions=skill.assumptions,
-                    lazy_load_references=skill.lazy_load_references,
+                skill=(
+                    SkillContext(
+                        id=skill.id,
+                        name=skill.name,
+                        type=skill.type,
+                        version=skill.version,
+                        loaded=True,
+                        description=skill.description,
+                        category=skill.category,
+                        entry_file=skill.entry_file,
+                        base_dir=skill.base_dir,
+                        base_prompt=skill.base_prompt,
+                        metadata=skill.metadata,
+                        references=[reference.model_dump() for reference in skill.references],
+                        assumptions=skill.assumptions,
+                        lazy_load_references=skill.lazy_load_references,
+                    )
+                    if skill is not None
+                    else None
                 ),
                 datasets=datasets,
                 mcp_tools={
@@ -143,10 +155,11 @@ class TestRunner:
             test_context_dump["_loaded_reference_calls"] = []
             session_request = ExecutorSessionRequest(
                 scenario_id=scenario.id,
-                skill_id=skill.id,
-                skill_prompt=self.skill_loader.render_prompt(skill),
+                skill_id=skill.id if skill else None,
+                skill_prompt=self.skill_loader.render_prompt(skill) if skill else None,
                 test_context=test_context_dump,
                 tools=[tool.model_dump() if hasattr(tool, "model_dump") else tool for tool in scenario.mcp.tools.required + scenario.mcp.tools.optional],
+                agent=scenario.agent.model_dump() if scenario.agent else None,
                 role_model_config={"model": scenario.runtime.agent_model, "executor": runtime_executor},
                 max_turns=scenario.runtime.max_turns,
                 timeout_seconds=scenario.runtime.timeout_seconds,
@@ -276,7 +289,7 @@ class TestRunner:
                 status=status,
                 duration_ms=duration_ms,
                 stage_results=dict(stage_results),
-                skill=test_context.skill.model_dump(),
+                skill=test_context.skill.model_dump() if test_context.skill else None,
                 tool_calls=[call.model_dump() for call in recorder.tool_calls],
                 assertions=[item.model_dump() for item in assertion_result.items],
                 judge=judge_result.model_dump(),
@@ -320,7 +333,7 @@ class TestRunner:
             else:
                 scenario_id = scenario.id
                 scenario_name = scenario.name
-                skill_info = {"id": scenario.target.skill_id, "version": scenario.target.skill_version, "loaded": False}
+                skill_info = {"id": scenario.target.skill_id or "unknown", "version": scenario.target.skill_version, "loaded": False}
             result = TestResult(
                 scenario_id=scenario_id,
                 scenario_name=scenario_name,

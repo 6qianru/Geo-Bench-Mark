@@ -1,0 +1,55 @@
+{
+  "scenario_id": "agent_buffer_mock_json",
+  "scenario_name": "外部智能体-缓冲区分析(mock, JSON 非流式)",
+  "status": "passed",
+  "duration_ms": 406,
+  "stage_results": {
+    "LOAD_SCENARIO": "PASSED",
+    "PREPARE_DATA": "PASSED",
+    "CONNECT_MCP": "PASSED",
+    "LOAD_SKILL": "SKIPPED",
+    "RUN_AGENT": "PASSED",
+    "RUN_ASSERTIONS": "PASSED",
+    "RUN_JUDGE": "PASSED",
+    "GENERATE_REPORT": "PASSED",
+    "CLEANUP": "PASSED"
+  },
+  "skill": null,
+  "tool_calls": [],
+  "assertions": [
+    {
+      "type": "final_response_contains",
+      "passed": true,
+      "message": "Final response contains expected values: ['缓冲区']",
+      "target": null
+    }
+  ],
+  "judge": {
+    "score": 1.0,
+    "passed": true,
+    "reason": "Judge disabled by scenario config.",
+    "issues": [],
+    "suggestions": []
+  },
+  "conversation": [
+    {
+      "role": "user",
+      "content": "对道路要素做 500 米缓冲区分析"
+    },
+    {
+      "role": "assistant",
+      "content": "已完成对道路要素做 500 米缓冲区分析：对目标要素执行 500 米缓冲区分析，结果数据集句柄为 dataset://generated/buffer_result，共生成 128 个缓冲要素。"
+    }
+  ],
+  "final_output": {
+    "final_response": "已完成对道路要素做 500 米缓冲区分析：对目标要素执行 500 米缓冲区分析，结果数据集句柄为 dataset://generated/buffer_result，共生成 128 个缓冲要素。",
+    "executor": "http_agent",
+    "runtime_mode": "compatibility",
+    "runtime_metadata": {
+      "agent_type": "http"
+    },
+    "output_artifacts": {}
+  },
+  "loaded_skill_references": [],
+  "errors": []
+}

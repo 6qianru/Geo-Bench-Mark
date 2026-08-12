@@ -144,6 +144,18 @@ pre {
   background: #fffefb;
 }
 
+.readonly-value {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fffefb;
+  font-weight: 600;
+  min-height: 46px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;

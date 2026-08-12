@@ -26,11 +26,9 @@ function prettyEvent(event) {
 export default function App() {
   const [scenarios, setScenarios] = useState([]);
   const [skills, setSkills] = useState([]);
-  const [executors, setExecutors] = useState([]);
   const [reports, setReports] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [selectedPath, setSelectedPath] = useState("");
-  const [selectedExecutor, setSelectedExecutor] = useState("langgraph");
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [validation, setValidation] = useState(null);
   const [tools, setTools] = useState([]);
@@ -50,30 +48,20 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const currentScenario = scenarios.find((scenario) => scenario.path === selectedPath);
-    if (currentScenario?.executor) {
-      setSelectedExecutor(currentScenario.executor);
-    }
-  }, [scenarios, selectedPath]);
-
   async function loadInitial() {
     try {
-      const [scenarioData, skillData, executorData, reportData, taskData] = await Promise.all([
+      const [scenarioData, skillData, reportData, taskData] = await Promise.all([
         fetchJson("/api/scenarios"),
         fetchJson("/api/skills"),
-        fetchJson("/api/executors"),
         fetchJson("/api/reports"),
         fetchJson("/api/tasks"),
       ]);
       setScenarios(scenarioData);
       setSkills(skillData);
-      setExecutors(executorData);
       setReports(reportData);
       setTasks(taskData);
       if (scenarioData.length > 0) {
         setSelectedPath(scenarioData[0].path);
-        setSelectedExecutor(scenarioData[0].executor || "langgraph");
       }
     } catch (err) {
       setError(err.message);
@@ -126,7 +114,6 @@ export default function App() {
         body: JSON.stringify({
           path: selectedPath,
           output_dir: "reports",
-          executor: selectedExecutor,
           memory_enabled: memoryEnabled,
         }),
       });
@@ -197,6 +184,7 @@ export default function App() {
     }
   }
 
+  const currentScenario = scenarios.find((scenario) => scenario.path === selectedPath);
   const stageResults = currentTask?.stage_results || {};
 
   return (
@@ -232,13 +220,7 @@ export default function App() {
           <div className="config-grid">
             <label className="field">
               <span>Executor runtime</span>
-              <select value={selectedExecutor} onChange={(event) => setSelectedExecutor(event.target.value)}>
-                {executors.map((executor) => (
-                  <option key={executor.id} value={executor.id}>
-                    {executor.name}
-                  </option>
-                ))}
-              </select>
+              <div className="readonly-value">{currentScenario?.executor || "—"}</div>
             </label>
             <label className="checkbox-field">
               <input

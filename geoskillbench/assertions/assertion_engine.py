@@ -123,11 +123,19 @@ class AssertionEngine:
 
     def _final_response_contains(self, assertion: AssertionConfig, recorder: ExecutionRecorder, _: TestContext) -> AssertionItemResult:
         response = recorder.final_output.get("final_response", "")
-        passed = all(str(value) in response for value in assertion.values)
+        # 兼容两种写法：values 列表（规范）或 value 单值（曾长期被契约文档示例误用）。
+        expected = assertion.values if assertion.values else ([assertion.value] if assertion.value is not None else [])
+        if not expected:
+            return AssertionItemResult(
+                type=assertion.type,
+                passed=False,
+                message="final_response_contains requires 'values' or 'value' to be configured.",
+            )
+        passed = all(str(value) in response for value in expected)
         return AssertionItemResult(
             type=assertion.type,
             passed=passed,
-            message=f"Final response {'contains' if passed else 'does not contain'} expected values: {assertion.values}",
+            message=f"Final response {'contains' if passed else 'does not contain'} expected values: {expected}",
         )
 
     def _skill_reference_loaded(self, assertion: AssertionConfig, recorder: ExecutionRecorder, _: TestContext) -> AssertionItemResult:

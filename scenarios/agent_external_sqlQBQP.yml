@@ -1,0 +1,34 @@
+id: agent_sqlQBQP
+name: 外部智能体-sqlQBQP
+version: "1.0.0"
+type: agent_test
+description: 对 mock 外部 HTTP 智能体做黑盒评测
+target: {}
+runtime:
+  executor: http_agent
+  agent_model: external-agent
+  max_turns: 1
+agent:
+  type: http
+  endpoint: http://192.168.13.130:8490/agentx/workflowstudio/api/v1/run/88b42c2e-4d35-4d2b-91ae-5f941c202040
+  query_params:
+    stream: "true"
+  stream_response: true
+  body:
+    input_type: chat
+    output_type: chat
+data: {}
+mcp:
+  servers: []
+  tools:
+    required: []
+    optional: []
+user_task: 对北京市与中心城区求交
+assertions:
+  - type: final_response_contains
+    value: "完成"
+judge:
+  enabled: false
+pass_criteria:
+  required_assertions_passed: true
+  judge_score_min: 0.8

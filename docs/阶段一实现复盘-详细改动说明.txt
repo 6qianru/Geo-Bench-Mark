@@ -1,0 +1,332 @@
+================================================================================
+GeoSkillBench 改造计划 · 阶段一实现复盘
+《架构支持"既测 skill 又测独立智能体"》
+================================================================================
+撰写目的：复盘阶段一从决策到实施的全部改动，供事后学习。凡带 [理由] 的段落
+都是当时为什么这么做的思考，比"改了什么"更重要。
+
+--------------------------------------------------------------------------------
+0. 一句话总结
+--------------------------------------------------------------------------------
+阶段一让 platform 不再只能测"自己搭的 LangGraph agent"，新增了第二种
+scenario 类型 `agent_test`：直接对"外部已经跑起来的智能体"做黑盒评测，
+接入方式是一个新的 Executor（HttpAgentExecutor）按 HTTP 契约转发请求。
+
+--------------------------------------------------------------------------------
+1. 背景与目标
+--------------------------------------------------------------------------------
+原架构里 `Scenario.skill` 必填、`type` 锁死为 `agent_skill_test`、runner 的
+`LOAD_SKILL` 是硬编码必经阶段。也就是说"被测对象"只能是 platform 自己
+现场搭建的 agent（skill prompt 注入 + LangGraph ReAct 循环），无法把
+一个已经独立运行的外部智能体拿来测。
+
+阶段一的目标：放开这个限制，让 scenario 能声明"我要测一个外部智能体"，
+platform 则通过 HTTP 调用它、收集它的最终回答、跑断言、出报告。
+
+--------------------------------------------------------------------------------
+2. P0 前置决策：接入对象与协议
+--------------------------------------------------------------------------------
+计划里写的 P0 是"必须先确认外部智能体接入对象与协议，否则 executor 就是
+给不存在的系统写适配器，写完无法验证"。
+
+最终确认的接入对象：SuperMap Workflow Studio（Agentx Server）。
+接口文档：docs/openapi_workflow_studio.yaml
+
+核心接口（场景 1：API 访问）：
+    POST /agentx/workflowstudio/api/v1/run/{flow_id}
+    query: stream=true|false
+    body: SimplifiedAPIRequest { input_value, input_type, output_type,
+           output_component, tweaks, session_id }
+    resp: RunResponse { outputs: [...], session_id }
+
+三条硬结论（决定了契约与 executor 的所有设计）：
+  1) 一问一答：一次请求一个完整响应，没有"中途追问"概念。
+     → need_interaction 恒为 False；每次 send_message 拿到响应即 finished。
+  2) finished 判定：stream=true 时 SSE 流结束（[DONE] 或连接关闭）= 完成；
+     stream=false 时拿到完整 JSON 响应 = 完成。
+  3) 工具调用不上报【⚠️ 此结论在真实联调后已被推翻】：当时依据接口文档
+     RunResponse 只有 outputs/session_id，推断"不上报工具调用"。但 2026-08
+     直连真实服务实测发现：SSE 流里会上报 `tool_event` 事件（含工具名/入参/
+     出参）。当前 executor 尚未解析为 tool_calls，断言矩阵已更新为"依赖上报，
+     暂不可用"。这印证了"tool_called 系列取决于对方上报能力"的判断框架，
+     只是当时对"到底上不上报"猜错了。
+
+--------------------------------------------------------------------------------
+3. 改动详解（按文件）
+--------------------------------------------------------------------------------
+
+--- 3.1 docs/Agent接入契约.md（新增）----------------------------------------
+定位：阶段一的"规范"，让 schema、executor、scenario 示例三者有唯一依据。
+章节：
+  - 接入对象与协议（上面的接口定义）
+  - agent 配置字段表（YAML 里每个字段的含义）
+  - Executor 行为（三段式、finished/need_interaction 语义）
+  - 文本提取规则（SSE/JSON 各怎么取文本，标注"待实测项"）
+  - 断言可用性矩阵（agent_test 下哪些断言可用/不可用）
+  - scenario 示例
+
+[理由] 先写契约再写代码：executor 是实现，契约是规格。没有契约，写出来
+的 executor 只有自己知道怎么用，别人无从评审、无从改。
+
+--- 3.2 geoskillbench/models/scenario.py -------------------------------------
+改动点：
+  a) 新增 AgentConfig 模型：
+       type: str = "http"              # 预留 sdk
+       endpoint: str | None            # POST 完整 URL
+       query_params: dict[str,str]     # 追加到 query string（如 stream）
+       headers: dict[str,str]          # 固定请求头
+       api_key_env: str | None         # 密钥的环境变量名
+       body: dict                      # 固定请求体字段（input_type 等）
+       stream_response: bool           # true=按 SSE 解析响应
+       timeout_seconds: int = 120
+       session_id: str | None          # 可选初始会话 ID
+  b) TargetConfig.skill_id 从必填改为 str | None = None
+  c) Scenario.type 从 Literal["agent_skill_test"] 扩为
+     Literal["agent_skill_test", "agent_test"]
+  d) Scenario.skill 从必填改为 SkillConfig | None = None
+  e) Scenario 新增 agent: AgentConfig | None = None
+  f) 新增 model_validator 组合约束：
+       type=agent_skill_test 且 skill 为空 → 报错
+       type=agent_test 且 agent 为空 → 报错
+
+[理由 a] endpoint 设计成完整 URL，而不是 base_url + flow_id 拼接。
+  这样 HttpAgentExecutor 与 Workflow Studio 的路径结构解耦——换一个厂商
+  的 HTTP agent，只改 scenario 配置，executor 代码一行不动。
+[理由 c] 用 Literal 而非自由字符串：编译期/加载期就能发现拼写错误，
+  比运行时 else 分支安全。
+[理由 f] Pydantic 的 model_validator(mode="after") 做"跨字段约束"。
+  Literal 只管单字段取值范围，管不了"这种 type 必须配那种字段"。
+
+--- 3.3 geoskillbench/models/result.py ---------------------------------------
+改动点：
+  a) ExecutorSessionRequest：
+       skill_id: str → str | None = None
+       skill_prompt: str → str | None = None
+       新增 agent: dict[str, Any] | None = None
+  b) ExecutorSession.skill_id: str → str | None = None
+  c) TestResult.skill: dict → dict | None = None
+
+[理由 a] agent_test 下没有 skill，skill_id/skill_prompt 传空；
+  但 HttpAgentExecutor 需要拿到 scenario.agent 配置，所以加 agent 字段。
+  agent 以 dict 而非 AgentConfig 传入，是为了避免 executor 反向依赖
+  models.scenario（保持 Executor 接口只依赖 models.result 的抽象边界）。
+
+--- 3.4 geoskillbench/models/test_context.py ---------------------------------
+改动点：TestContext.skill: SkillContext → SkillContext | None = None
+[理由] 无 skill 时 test_context 里 skill 为 None，下游（assertion、
+  judge、actor）均需容忍 None。grep 过全项目：只有 runner 用
+  test_context.skill，其余模块不碰，风险面很小。
+
+--- 3.5 geoskillbench/runner.py ----------------------------------------------
+改动点：
+  a) validate()：agent_test 时跳过 skill 加载，返回 dict 增加 scenario_type，
+     skill_id 置空。
+  b) LOAD_SKILL 阶段分支：
+       if scenario.type == "agent_test":
+           skill = None
+           stage_results["LOAD_SKILL"] = "SKIPPED"
+       else:
+           原逻辑（skill_loader.load + record_skill_load + PASSED）
+     SKIPPED 是 StageStatus Literal 里已有的状态，无需改枚举。
+  c) test_context 构建：skill 用三元表达式
+       SkillContext(...) if skill is not None else None
+  d) ExecutorSessionRequest 构建：
+       skill_id=skill.id if skill else None
+       skill_prompt=render_prompt(skill) if skill else None
+       agent=scenario.agent.model_dump() if scenario.agent else None
+  e) 成功路径 TestResult: skill=test_context.skill.model_dump()
+     if test_context.skill else None
+  f) 异常路径 skill_info: {"id": scenario.target.skill_id or "unknown", ...}
+
+[理由 b] 用 SKIPPED 而非 PASSED：语义诚实——不是"加载成功了"，而是
+  "这个类型不需要加载"。前端、报告都能直接看到 9 个阶段里这一格是 SKIPPED。
+[理由 d] agent 配置从 scenario 显式塞进 session_request，而不是让 executor
+  反向解析 scenario——保持 executor 只认 request 的单一数据源。
+
+--- 3.6 geoskillbench/executors/http_agent_executor.py（新增）----------------
+核心设计：
+  - 继承 Executor 抽象基类，实现 create_session / send_message / close_session
+  - create_session：从 request.agent 读配置 → 校验 endpoint 非空 →
+    从 api_key_env 读环境变量并注入 Authorization: Bearer 头 →
+    存会话状态 → 返回 ExecutorSession（runtime_mode="compatibility"，
+    表明这是黑盒转发而非自建 runtime）
+  - send_message：
+       body = agent.body 副本
+       body["input_value"] = message          # 动态注入用户消息
+       body["session_id"] = state.session_id  # 多轮上下文回传
+       httpx.post(endpoint, params=query_params, headers, json=body, timeout)
+       非流式：_parse_json → 从 outputs 提取文本 + 保存新 session_id
+       流式：  _parse_sse   → 聚合 data 行文本
+       返回 ExecutorStepResult(response=text, finished=True,
+                               need_interaction=False, tool_calls=[])
+  - close_session：从内存 sessions 字典弹出
+
+  文本提取（契约文档第 4 节，均标注"待实测项"）：
+  _parse_json：response.json() → _extract_text(data)
+  _extract_text 递归规则：
+       str 直接返回
+       list 逐项递归拼接
+       dict 依次取 text / message / content 字段；再试 data.text；
+             再试顶层 outputs；都没有返回 ""
+  _parse_sse：逐行读，只处理 data: 前缀行，遇 [DONE] 停；
+       payload 先试 json.loads，成功则 _extract_text(obj)，否则原样拼。
+  [理由] 这两处就是契约说的"待实测项"落点：真实 Workflow Studio 的 SSE
+  事件格式、outputs 内部结构只要与 mock 不同，改动被收敛到两个私有方法，
+  业务逻辑不用动。
+
+--- 3.7 geoskillbench/executors/factory.py ------------------------------------
+改动点：新增 if normalized == "http_agent": return HttpAgentExecutor(adapter)
+[理由] Executor 的实例化统一走 factory，runner / API 层不直接 new，
+  新增实现只动 factory 一处。
+
+--- 3.8 geoskillbench/runtime/judge_runtime.py（顺带修复）---------------------
+背景坑：evaluate() 里有针对"内部 skill 产物"的硬编码启发式扣分：
+    - 如果 final_response 不含"结果数据"和"句柄"，扣 0.1
+    - 如果不含 CRS/crs，扣 0.05
+ 这些对 skill 评测合理（skill 有输出契约），但对黑盒外部 agent 完全不适用
+ ——它的回答里不可能有这些词，会被白白扣分到不通过。
+ 而且排查发现 scenario.judge.enabled 在整个代码库里没有任何地方检查，
+ 属于"配置了但没生效"的死配置。
+
+修复：evaluate() 开头加
+    if not scenario.judge.enabled:
+        return JudgeResult(score=assertion_result.score,
+                           passed=assertion_result.passed,
+                           reason="Judge disabled by scenario config.")
+[理由] 让既有配置字段真正生效，而不是给 agent_test 新开一条旁路。
+  现有 scenario 的 judge.enabled 默认 True，行为不受影响；只有显式写
+  enabled: false 的 scenario 会跳过 judge。
+
+--- 3.9 geoskillbench/api/app.py ----------------------------------------------
+改动点：/api/executors 响应里增加 http_agent 条目（静态 dict：
+  id=http_agent, available=True, runtime_mode=compatibility）。
+[理由] 前端 executor 下拉框读这个接口，不注册的话用户在前端看不到
+  这个 executor 可选。注意 HttpAgentExecutor 没有 LangGraphExecutor 那种
+  real_runtime_available / runtime_issue 属性，所以这里直接给静态值。
+
+--------------------------------------------------------------------------------
+4. 验证过程与结果
+--------------------------------------------------------------------------------
+验证手段：起一个 mock HTTP server（_agent_test/mock_agent_server.py），
+按 Workflow Studio 的 path 结构 + SimplifiedAPIRequest 协议模拟响应，
+再用一个 agent_test 的 scenario 指向它，走 runner 全流程。
+
+--- 4.1 冒烟检查（python -c）---
+  - 全部 import 成功
+  - 构建 type=agent_test 无 skill 的 Scenario 成功
+  - type=agent_test 缺 agent → 抛 ValidationError
+  - type=agent_skill_test 缺 skill → 抛 ValidationError
+
+--- 4.2 SSE 流式路径（stream=true）---
+  status: passed
+  LOAD_SKILL: SKIPPED          ← agent_test 分支生效
+  final_response: SSE 5 段 data:{"text":...} 正确拼接成完整句子
+  assertions: final_response_contains "缓冲区" passed
+  judge: score 1.0, reason "Judge disabled by scenario config."
+  skill: null                   ← 全链路容忍无 skill
+  tool_calls: []                ← 黑盒不上报，符合契约
+  errors: []
+
+--- 4.3 JSON 非流式路径（stream=false）---
+  同样 passed；final_response 从 outputs[0].text 正确提取。
+  证明 _parse_json + _extract_text 的 outputs 分支工作正常。
+
+--- 4.4 回归验证（确认没破坏既有路径）---
+  跑 scenarios/buffer_school_500m_001.yml（agent_skill_test）：
+  10 个断言全部 passed，LOAD_SKILL: PASSED，judge 1.0。
+  结论：schema/runner 改动对既有 skill 评测路径零影响。
+
+--- 4.5 API 层 ---
+  /api/executors → ['langgraph', 'nanobot', 'http_agent']
+  /health → 200
+  /api/scenarios → 200（scenarios/ 下 2 个既有文件正常列出；
+  _agent_test/ 不在 scenarios/，不会污染前端列表）
+
+--- 4.6 报告 ---
+  skill=None 时 markdown 报告正常生成，Stage Results 里 LOAD_SKILL: SKIPPED，
+  Tool Calls 区为空列表，Final Response 有内容。
+
+--- 4.7 真实联调（2026-08，直连 192.168.13.130 真实 Agentx Server）---
+  之前 4.2/4.3 用 mock 验证的是"标准 SSE + 浅层 outputs"，真实服务一接就暴露
+  两处格式不符（这正是契约文档标注的"待实测项"落点）：
+  - stream=false（JSON）：最终回答在 outputs[0].outputs[0].results.message.data.text
+    三层嵌套，原 _extract_text 够不到 → 提取为空。
+  - stream=true（SSE）：每行是一个完整 JSON（event: token / add_message /
+    tool_event），不是标准 SSE 的 `data:` 前缀 → 原 _parse_sse 全丢。
+    最终回答 = 所有 event: token 的 data.chunk 按序拼接。
+  - 真实接口会上报 tool_event（推翻硬结论 3）。
+  修复：重写 _parse_sse / _extract_text 适配真实格式，同时保留对 mock
+  标准 SSE 的兼容分支。重跑用户场景（agent_external_sqlQBQP）→
+  RUN_AGENT PASSED，final_response 提取出完整回答（2397 字符），
+  final_response_contains "完成" 真实命中，status passed 为真通过。
+
+--------------------------------------------------------------------------------
+5. 踩坑记录（环境/协议坑，不是业务 bug）
+--------------------------------------------------------------------------------
+坑1：mock server HTTP/1.1 keep-alive 挂起
+  用 http.server 且 protocol_version="HTTP/1.1" 时，非流式分支没发
+  Content-Length，客户端（curl）等不到 body 边界 → 挂起 2 分钟超时。
+  修复：非流式分支显式发 Content-Length；SSE 分支写完 [DONE] 后
+  置 close_connection=True，让客户端识别流结束。
+
+坑2：Git Bash 里 curl 发送中文按 GBK 编码
+  curl -d '{"input_value":"测试"}' 在 Windows Git Bash 下把中文按 GBK 发，
+  server 端 json.loads 按 UTF-8 解码失败 → UnicodeDecodeError。
+  这是控制台编码问题，不是协议问题：Python httpx 发请求时
+  json.dumps 默认 ensure_ascii=True，中文会转成 \uXXXX 纯 ASCII，
+  所以平台真实路径不受影响。验证时 curl 改用 ASCII 输入即可。
+
+[理由] 这类坑记下来比代码本身更值钱：下次任何人看到"mock server 挂了"
+  "curl 中文解码失败"，直接有答案。
+
+--------------------------------------------------------------------------------
+6. 设计决策复盘（为什么这么做，回头看是否成立）
+--------------------------------------------------------------------------------
+D1 契约文档先行成立：executor 开发时照着契约写，验证时 mock server
+   照着契约做，两边对上了。没有"边写边猜"。
+D2 endpoint 完整 URL、不与厂商解耦失败：正确。换接入对象只改 YAML。
+D3 密钥走 api_key_env 环境变量：正确。YAML 进 git，密钥绝不能进。
+D4 断言可用性矩阵写进文档：正确。它阻止了"以为 tool_called 能测外部
+   黑盒"这种误用——实际接口根本没有工具调用上报。
+D5 judge.enabled 顺带修复：当时发现是死配置，顺手修了。这属于
+   "顺手但不越界"——因为它正好是 agent_test 需要的前提。
+
+--------------------------------------------------------------------------------
+7. 遗留事项 / 下一步
+--------------------------------------------------------------------------------
+1) 真实联调【已完成】：2026-08 直连真实 Agentx Server 实测。真实 SSE 为逐行
+   JSON（event: token 承载最终回答），JSON 非流式回答在 results.message.data.text。
+   已重写 _parse_sse / _extract_text 适配，用户场景（agent_external_sqlQBQP）
+   跑通，最终回答真实提取、断言真实通过。
+2) tool_calls 上报增强【已完成】：真实接口 SSE 上报 tool_event，executor 已把
+   tool_start/tool_end（按 run_id 配对）解析为 ToolCallRecord 并写入报告。
+   agent_test 场景现在可以使用 tool_called / tool_sequence / tool_argument_equals
+   断言。不上报工具调用时 tool_calls 为空、断言判失败而非报错（黑盒兼容）。
+3) _agent_test/ 目录（mock server + 2 个 mock scenario + 报告）：
+   待定保留（作契约参考 mock）还是删除。注意 mock 仍是标准 SSE 格式，与真实
+   逐行 JSON 格式不同——若保留，建议 mock server 改为模拟真实格式以便离线验证。
+4) 改造计划文档阶段一的 checkbox：已实施，可标记完成状态。
+5) 阶段二（DB 持久化）、阶段三（前端 case 上传）未动，按计划顺序推进。
+
+--------------------------------------------------------------------------------
+附录：本次改动文件清单
+--------------------------------------------------------------------------------
+新增：
+  docs/Agent接入契约.md
+  geoskillbench/executors/http_agent_executor.py
+  _agent_test/mock_agent_server.py
+  _agent_test/scenario_agent_mock.yml
+  _agent_test/scenario_agent_mock_json.yml
+
+修改：
+  geoskillbench/models/scenario.py
+  geoskillbench/models/result.py
+  geoskillbench/models/test_context.py
+  geoskillbench/runner.py
+  geoskillbench/executors/factory.py
+  geoskillbench/runtime/judge_runtime.py
+  geoskillbench/api/app.py
+
+================================================================================
+（复盘结束）
+================================================================================

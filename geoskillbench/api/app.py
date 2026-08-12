@@ -227,6 +227,14 @@ def list_executors() -> list[dict]:
             "runtime_mode": "real" if nanobot.compatibility_note is None else "compatibility",
             "issue": nanobot.compatibility_note,
         },
+        {
+            "id": "http_agent",
+            "name": "HttpAgentExecutor",
+            "available": True,
+            "default": False,
+            "runtime_mode": "compatibility",
+            "issue": "外部 HTTP 智能体黑盒接入（见 docs/Agent接入契约.md）",
+        },
     ]
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RuntimeConfig(BaseModel):
@@ -105,8 +105,22 @@ class PassCriteria(BaseModel):
     judge_score_min: float = 0.8
 
 
+class AgentConfig(BaseModel):
+    """agent_test 模式下外部智能体接入配置（见 docs/Agent接入契约.md）"""
+
+    type: str = "http"
+    endpoint: str | None = None
+    query_params: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
+    api_key_env: str | None = None
+    body: dict[str, Any] = Field(default_factory=dict)
+    stream_response: bool = False
+    timeout_seconds: int = 120
+    session_id: str | None = None
+
+
 class TargetConfig(BaseModel):
-    skill_id: str
+    skill_id: str | None = None
     skill_version: str | None = None
 
 
@@ -114,16 +128,25 @@ class Scenario(BaseModel):
     id: str
     name: str
     version: str
-    type: Literal["agent_skill_test"] = "agent_skill_test"
+    type: Literal["agent_skill_test", "agent_test"] = "agent_skill_test"
     description: str = ""
     target: TargetConfig
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
-    skill: SkillConfig
+    skill: SkillConfig | None = None
+    agent: AgentConfig | None = None
     user_task: str
     actor: ActorConfig = Field(default_factory=ActorConfig)
     expected_behavior: ExpectedBehavior = Field(default_factory=ExpectedBehavior)
     assertions: list[AssertionConfig] = Field(default_factory=list)
     judge: JudgeConfig = Field(default_factory=JudgeConfig)
     pass_criteria: PassCriteria = Field(default_factory=PassCriteria)
+
+    @model_validator(mode="after")
+    def _check_type_fields(self) -> "Scenario":
+        if self.type == "agent_skill_test" and self.skill is None:
+            raise ValueError("type=agent_skill_test 时 skill 必填")
+        if self.type == "agent_test" and self.agent is None:
+            raise ValueError("type=agent_test 时 agent 配置必填")
+        return self

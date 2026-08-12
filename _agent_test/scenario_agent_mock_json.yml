@@ -1,0 +1,35 @@
+id: agent_buffer_mock_json
+name: 外部智能体-缓冲区分析(mock, JSON 非流式)
+version: "1.0.0"
+type: agent_test
+description: 验证 agent_test 的非流式（stream=false）路径
+target: {}
+runtime:
+  executor: http_agent
+  agent_model: external-agent
+  max_turns: 1
+agent:
+  type: http
+  endpoint: http://127.0.0.1:8901/agentx/workflowstudio/api/v1/run/mock-flow-001
+  query_params:
+    stream: "false"
+  stream_response: false
+  body:
+    input_type: chat
+    output_type: chat
+data: {}
+mcp:
+  servers: []
+  tools:
+    required: []
+    optional: []
+user_task: 对道路要素做 500 米缓冲区分析
+assertions:
+  - type: final_response_contains
+    values:
+      - "缓冲区"
+judge:
+  enabled: false
+pass_criteria:
+  required_assertions_passed: true
+  judge_score_min: 0.8

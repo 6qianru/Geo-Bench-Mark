@@ -33,10 +33,11 @@ class AgentRunResult(BaseModel):
 
 class ExecutorSessionRequest(BaseModel):
     scenario_id: str
-    skill_id: str
-    skill_prompt: str
+    skill_id: str | None = None
+    skill_prompt: str | None = None
     test_context: dict[str, Any]
     tools: list[Any]
+    agent: dict[str, Any] | None = None
     role_model_config: dict[str, Any] = Field(default_factory=dict)
     max_turns: int = 6
     timeout_seconds: int = 180
@@ -47,7 +48,7 @@ class ExecutorSession(BaseModel):
     session_id: str
     executor_type: str
     scenario_id: str
-    skill_id: str
+    skill_id: str | None = None
     created_at: str
     runtime_mode: Literal["real", "compatibility"] = "real"
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -89,7 +90,7 @@ class TestResult(BaseModel):
     status: Literal["passed", "failed"]
     duration_ms: int
     stage_results: dict[str, StageStatus]
-    skill: dict[str, Any]
+    skill: dict[str, Any] | None = None
     tool_calls: list[dict[str, Any]]
     assertions: list[dict[str, Any]]
     judge: dict[str, Any]

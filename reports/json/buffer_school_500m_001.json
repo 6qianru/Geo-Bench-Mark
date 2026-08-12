@@ -2,7 +2,7 @@
   "scenario_id": "buffer_school_500m_001",
   "scenario_name": "学校周边 500 米缓冲区分析",
   "status": "passed",
-  "duration_ms": 37,
+  "duration_ms": 21,
   "stage_results": {
     "LOAD_SCENARIO": "PASSED",
     "PREPARE_DATA": "PASSED",
@@ -51,7 +51,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T09:17:41.221944+00:00",
+      "recorded_at": "2026-08-11T09:42:01.659460+00:00",
       "order": 1
     },
     {
@@ -70,7 +70,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T09:17:41.221952+00:00",
+      "recorded_at": "2026-08-11T09:42:01.659478+00:00",
       "order": 2
     },
     {
@@ -91,7 +91,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-05-22T09:17:41.221955+00:00",
+      "recorded_at": "2026-08-11T09:42:01.659483+00:00",
       "order": 3
     }
   ],

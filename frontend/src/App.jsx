@@ -23,11 +23,104 @@ function prettyEvent(event) {
   return `${type} | executor=${executor} | stage=${stage} | status=${status}`;
 }
 
+function ResultDetail({ result }) {
+  const fr = result.final_output?.final_response || "";
+  const toolCalls = result.tool_calls || [];
+  const conversation = result.conversation || [];
+  const assertions = result.assertions || [];
+  const errors = result.errors || [];
+
+  const jsonBlock = (obj) =>
+    obj && typeof obj === "object" ? JSON.stringify(obj, null, 2) : String(obj ?? "");
+
+  return (
+    <div className="result-detail">
+      <div className="result-section">
+        <h4>最终回答</h4>
+        <pre className="result-text">{fr || "(空)"}</pre>
+      </div>
+      <div className="result-section">
+        <h4>工具调用</h4>
+        {toolCalls.length === 0 ? (
+          <p className="muted">(无工具调用)</p>
+        ) : (
+          <ul className="list compact">
+            {toolCalls.map((call, index) => (
+              <li key={index}>
+                <div className="tool-row">
+                  <strong>{call.tool_name}</strong>
+                  <span className={call.status === "success" ? "pill ok" : "pill bad"}>{call.status}</span>
+                </div>
+                <div className="json-label">入参</div>
+                <pre>{jsonBlock(call.arguments)}</pre>
+                {call.result ? (
+                  <>
+                    <div className="json-label">出参</div>
+                    <pre>{jsonBlock(call.result)}</pre>
+                  </>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>完整对话</h4>
+        {conversation.length === 0 ? (
+          <p className="muted">(无对话记录)</p>
+        ) : (
+          <ul className="list compact">
+            {conversation.map((message, index) => (
+              <li key={index}>
+                <strong className={message.role === "assistant" ? "role-assistant" : "role-user"}>
+                  {message.role}
+                </strong>
+                <pre className="msg-content">{jsonBlock(message.content)}</pre>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>断言</h4>
+        {assertions.length === 0 ? (
+          <p className="muted">(无断言)</p>
+        ) : (
+          <ul className="list compact">
+            {assertions.map((item, index) => (
+              <li key={index} className={item.passed ? "assertion ok" : "assertion bad"}>
+                <span className="pill">{item.passed ? "passed" : "failed"}</span>
+                <span>
+                  {item.type}: {item.message}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>错误</h4>
+        {errors.length === 0 ? (
+          <p className="muted">(无错误)</p>
+        ) : (
+          errors.map((error, index) => <pre key={index} className="error-box">{error}</pre>)
+        )}
+      </div>
+      <details className="result-section">
+        <summary>原始 JSON</summary>
+        <pre>{JSON.stringify(result, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
 export default function App() {
   const [scenarios, setScenarios] = useState([]);
   const [skills, setSkills] = useState([]);
   const [reports, setReports] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [runHistory, setRunHistory] = useState([]); // 来自 DB 的持久化历史（/api/runs）
+  const [historyDbError, setHistoryDbError] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [validation, setValidation] = useState(null);
@@ -62,6 +155,34 @@ export default function App() {
       setTasks(taskData);
       if (scenarioData.length > 0) {
         setSelectedPath(scenarioData[0].path);
+      }
+      await loadRunHistory();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function loadRunHistory() {
+    try {
+      const data = await fetchJson("/api/runs");
+      if (data.available) {
+        setRunHistory(data.runs);
+        setHistoryDbError("");
+      } else {
+        setRunHistory([]);
+        setHistoryDbError(data.error || "数据库不可用");
+      }
+    } catch (err) {
+      setHistoryDbError(err.message);
+    }
+  }
+
+  async function loadRunDetail(runId) {
+    try {
+      const data = await fetchJson(`/api/runs/${runId}`);
+      // 后端返回 { run_id, scenario_id, json, md, ... }，json 是报告全文 JSON 字符串
+      if (data.json) {
+        setRunResult(JSON.parse(data.json));
       }
     } catch (err) {
       setError(err.message);
@@ -149,6 +270,7 @@ export default function App() {
           setRunResult(task.result);
         }
         loadReportsOnly();
+        loadRunHistory();
         setLoading(false);
         source.close();
       }
@@ -332,21 +454,29 @@ export default function App() {
 
         <section className="panel">
           <h2>Run Result</h2>
-          <pre>{runResult ? JSON.stringify(runResult, null, 2) : "No run completed yet."}</pre>
+          {runResult ? <ResultDetail result={runResult} /> : "No run completed yet."}
         </section>
 
         <section className="panel">
           <h2>Task History</h2>
-          <ul className="list">
-            {tasks.map((task) => (
-              <li key={task.task_id}>
-                <strong>{task.task_id}</strong>
-                <span>
-                  {task.status} · {task.run_config?.executor || "langgraph"} · {task.current_stage || "no stage yet"}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {historyDbError ? (
+            <pre className="error-box">{historyDbError}</pre>
+          ) : runHistory.length === 0 ? (
+            <p className="muted">No runs recorded yet.</p>
+          ) : (
+            <ul className="list">
+              {runHistory.map((run) => (
+                <li key={run.run_id} onClick={() => loadRunDetail(run.run_id)} style={{ cursor: "pointer" }}>
+                  <strong>{run.scenario_name || run.scenario_id}</strong>
+                  <span>
+                    {run.run_id.slice(0, 8)} · <span className={run.status === "passed" ? "pill ok" : "pill bad"}>{run.status}</span> ·{" "}
+                    {run.executor || "—"} · {run.created_at?.slice(0, 19)?.replace("T", " ")}
+                  </span>
+                  <span className="muted">点击查看该次运行报告</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section className="panel">

@@ -2,7 +2,7 @@
 
 - Scenario ID: `buffer_school_500m_001`
 - Status: `passed`
-- Duration: `37 ms`
+- Duration: `21 ms`
 - Judge Score: `1.0`
 
 ## Stage Results

@@ -1,8 +1,8 @@
 id: agent_buffer_mock
-name: 外部智能体-缓冲区分析(mock)
+name: 外部智能体-缓冲区分析(mock, SSE)
 version: "1.0.0"
 type: agent_test
-description: 对 mock 外部 HTTP 智能体做黑盒评测（验证 agent_test 路径）
+description: 对 mock 外部 HTTP 智能体做黑盒评测（SSE 流式路径，模拟真实格式）
 target: {}
 runtime:
   executor: http_agent
@@ -25,6 +25,8 @@ mcp:
     optional: []
 user_task: 对道路要素做 500 米缓冲区分析
 assertions:
+  - type: tool_called
+    tool: buffer_analysis
   - type: final_response_contains
     values:
       - "缓冲区"

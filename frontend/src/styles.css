@@ -229,6 +229,91 @@ button:disabled {
   margin-bottom: 16px;
 }
 
+.result-detail {
+  display: grid;
+  gap: 16px;
+}
+
+.result-section {
+  display: grid;
+  gap: 8px;
+}
+
+.result-section h4 {
+  margin: 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-strong);
+}
+
+.result-text {
+  white-space: pre-wrap;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.json-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.pill {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.pill.ok {
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent-strong);
+}
+
+.pill.bad {
+  background: rgba(166, 27, 27, 0.12);
+  color: var(--danger);
+}
+
+.role-assistant {
+  color: var(--accent-strong);
+}
+
+.role-user {
+  color: #92700a;
+}
+
+.msg-content {
+  margin-top: 4px;
+}
+
+.assertion {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+details.result-section summary {
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
 @media (max-width: 900px) {
   .hero,
   .meta-grid,

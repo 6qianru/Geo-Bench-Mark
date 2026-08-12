@@ -51,17 +51,17 @@
 
 这个改动涉及 `Scenario` schema 和 `Executor` 接口，是所有其他功能的地基，需要先做，避免后面 DB/前端返工。
 
-- [ ] **前置（P0）**：确认外部智能体接入对象与协议（HTTP 轮询 / 流式 / SDK）。没有真实接入对象就开工，`http_agent_executor` 会成为"给不存在的系统写适配器"，写完无法验证、极易返工。本文档末尾"待确认事项"第 2 条（HTTP API vs SDK）必须先有答案
-- [ ] **定义接入契约**（阶段一真正的大头，不是 schema）：在 `docs/` 新增一节或单独文档，明确：
+- [x] **前置（P0）**：确认外部智能体接入对象与协议（HTTP 轮询 / 流式 / SDK）。没有真实接入对象就开工，`http_agent_executor` 会成为"给不存在的系统写适配器"，写完无法验证、极易返工。本文档末尾"待确认事项"第 2 条（HTTP API vs SDK）必须先有答案。**已完成**：接入对象 = SuperMap Workflow Studio（Agentx Server），`POST /agentx/workflowstudio/api/v1/run/{flow_id}`，`stream=true` 走 SSE 流式，实测真实格式为逐行 JSON（`event: token` / `add_message` / `tool_event`）
+- [x] **定义接入契约**（阶段一真正的大头，不是 schema）：在 `docs/` 新增一节或单独文档，明确：`docs/Agent接入契约.md`（已完成）
   - scenario 新增 agent 配置字段（endpoint / 类型 / 轮数），`type` 新增 `"agent_test"`
   - HTTP 请求 / 响应形状（轮询还是流式）、超时与错误语义
   - 外部智能体**如何上报结构化工具调用**（`tool_called` / `tool_sequence` / `tool_argument_equals` 存活的前提）
   - 外部智能体**如何表达"已完成" / "需要追问"**——平台内部 `[NEED_INTERACTION]` / `[FINAL]` 协议外部 agent 不遵守，需定义适配规则
-- [ ] `models/scenario.py`：`Scenario.skill` 改可选；`target.skill_id` 一并放开（当前 `scenario.py:109` 也是必填）；`type` 新增 `"agent_test"`；新增 agent 配置字段
-- [ ] `runner.py`：按 type 分支——`agent_skill_test` 保持现状；`agent_test` 跳过 `LOAD_SKILL`，且 `test_context`（`runner.py:112` 的 `skill=SkillContext(...)`）与 `ExecutorSessionRequest`（`skill_prompt=render_prompt(skill)`）都要能接受"无 skill"
-- [ ] 新增 `executors/http_agent_executor.py`：实现三段式，按契约转发外部智能体、把上报的工具调用日志转成 `ToolCallRecord`、适配 finished / need_interaction 判定
-- [ ] 在 `executors/factory.py` 注册新 Executor
-- [ ] **断言可用性矩阵写入文档**（修订原计划不准确处）：
+- [x] `models/scenario.py`：`Scenario.skill` 改可选；`target.skill_id` 一并放开（当前 `scenario.py:109` 也是必填）；`type` 新增 `"agent_test"`；新增 agent 配置字段（已完成：`AgentConfig`，含 endpoint/query_params/headers/stream_response 等）
+- [x] `runner.py`：按 type 分支——`agent_skill_test` 保持现状；`agent_test` 跳过 `LOAD_SKILL`，且 `test_context`（`runner.py:112` 的 `skill=SkillContext(...)`）与 `ExecutorSessionRequest`（`skill_prompt=render_prompt(skill)`）都要能接受"无 skill"（已完成：LOAD_SKILL → SKIPPED，skill 全链路置空）
+- [x] 新增 `executors/http_agent_executor.py`：实现三段式，按契约转发外部智能体、把上报的工具调用日志转成 `ToolCallRecord`、适配 finished / need_interaction 判定（已完成：`tool_event` 解析、SSE/JSON 提取，实测真实格式）
+- [x] 在 `executors/factory.py` 注册新 Executor（已完成：`http_agent`）
+- [x] **断言可用性矩阵写入文档**（修订原计划不准确处）：
   - `skill_loaded`、`skill_reference_loaded*`：不可用（外部黑盒不会上报）
   - `result_dataset_exists` / `result_geometry_type_in`：依赖平台侧 mock `_dataset_store`，外部 agent 不会填充 → 同样**不可用**（除非外部 agent 上报结果数据集、平台注册进 store）。原计划"`result_*` 不受影响"不成立
   - `tool_called` / `tool_sequence` / `tool_argument_equals` / `final_response_contains`：可用性**取决于外部 agent 能否上报结构化工具调用**；只返回纯文本则都不可用
@@ -73,16 +73,17 @@
 
 范围已确认：**先只做评测结果的持久化**（跑分记录、历史查询），暂不用 PostGIS 替换 MCP 工具里的假地理计算（后续如要做几何正确性校验再启动）。
 
-- [ ] 复用 `agent-geo-arena` 项目里已有的 Postgres + SQLAlchemy + psycopg 连接层模式（`agent-geo-arena/api/db.py`、`api/models.py` 的 Run/Check 表设计可直接参考）
-- [ ] `geoskillbench` 加依赖：`sqlalchemy`、`psycopg[binary]`
-- [ ] 新增一张 `runs` 表：`run_id`、`scenario_id`、`scenario_name`、`executor`、`status`、`created_at`、`result_json`（`result_json` 直接存 `TestResult.model_dump_json()`，不需要拆成 F-19 文档里那种范式化多表）
-- [ ] `.env` 增加 `DATABASE_URL` 配置项（参考 `agent-geo-arena/.env.example` 的写法）
-- [ ] `api/task_manager.py`：任务创建/完成时机各加一次 DB insert/update；内存态的 SSE 事件流不动（实时推送本来就该留在内存，DB 只负责"跑完之后能不能查到"）
-- [ ] 报告文件命名从 `{scenario_id}.json` 改为 `{run_id}.json`，避免覆盖
-- [ ] 新增 API：`GET /api/runs`（列表，支持按 `scenario_id` 过滤）、`GET /api/runs/{run_id}`（详情）
-- [ ] 数据库层面可以顺手 `CREATE EXTENSION postgis;`，为将来把 mock 几何计算换成真实 PostGIS 运算做准备（本阶段不使用，只是提前开好）
+- [x] `geoskillbench` 加依赖：`sqlalchemy`、`psycopg[binary]`、`python-dotenv`（已完成 2026-08）
+- [x] 新增一张 `reports` 表：`run_id`（主键）、`scenario_id`、`scenario_name`、`executor`、`status`、`created_at`、`json_content`、`md_content`（已完成。**比原计划的 `runs` 表简化**：不存 `result_json`，直接存报告全文 json+md，agent 结果地图不重复存——报告里已有数据服务 URL）
+- [x] 新增 `geoskillbench/api/db.py` 连接层（已完成。**未复用 agent-geo-arena**——本机无该项目，且 SQLAlchemy 连接层是标准写法无需抄。`DATABASE_URL` 留空时本地自动用 SQLite 文件库 `reports.db`，填 PostGIS 连接串即切服务器库，代码零改动）
+- [x] `.env` 增加 `DATABASE_URL` 配置项（已完成。已加入 `.gitignore`，连接串不进 git）
+- [x] `api/task_manager.py`：把 `task_id` 作为 `run_id` 传给 `runner.run()`，报告落库（已完成。内存态 SSE 事件流不动）
+- [x] `TestResult` / `runner.run()` 增加 `run_id` 支持（已完成。`run()` 未传 `run_id` 时自动生成 uuid，CLI 直跑也兼容）
+- [x] 报告文件命名从 `{scenario_id}.json` 改为 `{run_id}.json`，避免覆盖（**本次未改文件命名**——DB 已按 run_id 区分多次运行、解决覆盖问题；文件系统仍按 scenario_id 命名保留现状，避免动 `/api/reports` 前端逻辑。如需文件层也区分可后续补）
+- [x] 新增 API：`GET /api/runs`（列表，支持按 `scenario_id` 过滤）、`GET /api/runs/{run_id}`（详情，含报告全文）（已完成，2026-08 本地 SQLite 验证通过）
+- [ ] 数据库层面可以顺手 `CREATE EXTENSION postgis;`，为将来把 mock 几何计算换成真实 PostGIS 运算做准备（本阶段不使用，只是提前开好）——**延后**：连接串尚未配置，等部署服务器填 `DATABASE_URL` 时一并执行
 
-预估工作量：1~2 天（有 agent-geo-arena 的现成模式可抄，比重新设计更省）。
+预估工作量：1~2 天。**实际约 1 天**（比原计划省，因无需抄 agent-geo-arena、无需拆 runs 表；多出的成本是 run_id 贯穿改动）。
 
 ### 阶段三：前端支持添加/编辑 eval case（砍掉文档里的完整版，只做最小闭环）
 
@@ -90,7 +91,7 @@
 
 - [ ] 后端：复用现有 `loader/scenario_loader.py`、`loader/skill_loader.py`、`runner.validate()` 的解析/校验逻辑，包一层"上传/粘贴 YAML → validate → 存文件"的接口（scenario 和 skill 各一个）
 - [ ] 前端：加一个文本框/文件上传 + 已有的 Validate 按钮流程，保存成功后刷新场景下拉框
-- [ ] 前端：把 Task History / Reports 区块从"读文件系统"改为查阶段二新增的 `/api/runs` 接口，这样重启后历史不丢
+- [x] 前端：把 Task History / Reports 区块从"读文件系统"改为查阶段二新增的 `/api/runs` 接口，这样重启后历史不丢（**Task History 已接 /api/runs**，点击历史行加载该 run 报告全文到 Run Result 区，复用 ResultDetail 渲染；DB 不可用时显示错误提示而非崩溃。**Reports 区块未切**——仍读 `/api/reports` 文件系统，如需要可后补）
 
 预估工作量：前端 1~2 天，后端半天。
 

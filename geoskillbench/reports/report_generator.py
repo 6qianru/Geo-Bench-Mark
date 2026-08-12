@@ -27,15 +27,39 @@ class ReportGenerator:
         for item in result.assertions:
             lines.append(f"- `{item['type']}`: `{'passed' if item['passed'] else 'failed'}` - {item['message']}")
         lines.extend(["", "## Tool Calls"])
-        for call in result.tool_calls:
-            lines.append(f"- `{call['tool_name']}`: `{call['status']}` args={call['arguments']}")
+        if result.tool_calls:
+            for index, call in enumerate(result.tool_calls, start=1):
+                lines.append(f"### {index}. `{call['tool_name']}` (`{call['status']}`)")
+                lines.append("入参:")
+                lines.append(f"```json\n{json.dumps(call.get('arguments') or {}, ensure_ascii=False, indent=2)}\n```")
+                if call.get("result"):
+                    lines.append("出参:")
+                    lines.append(f"```json\n{json.dumps(call['result'], ensure_ascii=False, indent=2)}\n```")
+        else:
+            lines.append("- (无工具调用)")
         if result.loaded_skill_references:
             lines.extend(["", "## Loaded Skill References"])
             for reference in result.loaded_skill_references:
                 path = reference["path"] if isinstance(reference, dict) else reference.path
                 loaded_at = reference["loaded_at"] if isinstance(reference, dict) else reference.loaded_at
                 lines.append(f"- `{path}` at `{loaded_at}`")
+        lines.extend(["", "## Conversation"])
+        if result.conversation:
+            for index, message in enumerate(result.conversation, start=1):
+                role = message.get("role", "message")
+                content = message.get("content", "")
+                if not isinstance(content, str):
+                    content = json.dumps(content, ensure_ascii=False)
+                lines.append(f"### {index}. {role}")
+                lines.append(f"```text\n{content}\n```")
+        else:
+            lines.append("- (无对话记录)")
         lines.extend(["", "## Final Response", "", result.final_output.get("final_response", "")])
+        lines.extend(["", "## Errors"])
+        if result.errors:
+            lines.extend(f"- {error}" for error in result.errors)
+        else:
+            lines.append("- (无)")
         return "\n".join(lines)
 
     def write_reports(self, output_dir: str, result: TestResult) -> tuple[Path, Path]:
@@ -46,6 +70,37 @@ class ReportGenerator:
         md_dir.mkdir(parents=True, exist_ok=True)
         json_path = json_dir / f"{result.scenario_id}.json"
         md_path = md_dir / f"{result.scenario_id}.md"
-        json_path.write_text(self.generate_json(result), encoding="utf-8")
-        md_path.write_text(self.generate_markdown(result), encoding="utf-8")
+        json_text = self.generate_json(result)
+        md_text = self.generate_markdown(result)
+        json_path.write_text(json_text, encoding="utf-8")
+        md_path.write_text(md_text, encoding="utf-8")
+        self._persist_to_db(result, json_text, md_text)
         return json_path, md_path
+
+    def _persist_to_db(self, result: TestResult, json_text: str, md_text: str) -> None:
+        """阶段二：把报告全文写入 reports 表（SQLite 本地 / PostGIS 服务器，由 DATABASE_URL 决定）。
+
+        DB 写入失败只记日志、不影响主流程——评测结果已落在文件系统，
+        持久化是增强能力，不能因数据库问题让整个 run 失败。
+        """
+        from geoskillbench.api import db
+
+        executor = ""
+        if isinstance(result.final_output, dict):
+            executor = result.final_output.get("executor", "") or ""
+        try:
+            db.save_report(
+                {
+                    "run_id": result.run_id,
+                    "scenario_id": result.scenario_id,
+                    "scenario_name": result.scenario_name,
+                    "executor": executor,
+                    "status": result.status,
+                    "json": json_text,
+                    "md": md_text,
+                }
+            )
+        except Exception as exc:  # pragma: no cover - DB 故障不应中断评测
+            import logging
+
+            logging.getLogger(__name__).warning("Failed to persist report to DB: %s", exc)

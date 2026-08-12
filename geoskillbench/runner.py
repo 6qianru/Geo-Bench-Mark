@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -71,7 +72,9 @@ class TestRunner:
         output_dir: str | None = None,
         event_callback: Callable[[dict[str, Any]], None] | None = None,
         run_config: dict[str, Any] | None = None,
+        run_id: str | None = None,
     ) -> TestResult:
+        run_id = run_id or uuid.uuid4().hex
         stage_results = {stage: "PENDING" for stage in STAGES}
         start_time = time.perf_counter()
         recorder = ExecutionRecorder(scenario_id=Path(scenario_path).stem)
@@ -284,6 +287,7 @@ class TestRunner:
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             status = "passed" if assertion_result.passed and judge_result.passed else "failed"
             result = TestResult(
+                run_id=run_id,
                 scenario_id=scenario.id,
                 scenario_name=scenario.name,
                 status=status,
@@ -335,6 +339,7 @@ class TestRunner:
                 scenario_name = scenario.name
                 skill_info = {"id": scenario.target.skill_id or "unknown", "version": scenario.target.skill_version, "loaded": False}
             result = TestResult(
+                run_id=run_id,
                 scenario_id=scenario_id,
                 scenario_name=scenario_name,
                 status="failed",

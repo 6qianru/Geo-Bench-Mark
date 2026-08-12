@@ -85,6 +85,7 @@ class JudgeResult(BaseModel):
 
 
 class TestResult(BaseModel):
+    run_id: str = ""  # 每次运行的唯一 ID，阶段二起用于区分同 scenario 的多份报告（不再覆盖）
     scenario_id: str
     scenario_name: str
     status: Literal["passed", "failed"]

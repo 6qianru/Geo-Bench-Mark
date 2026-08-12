@@ -332,3 +332,49 @@ def get_report(scenario_id: str) -> dict:
         "json": json_path.read_text(encoding="utf-8"),
         "markdown": md_path.read_text(encoding="utf-8") if md_path.exists() else "",
     }
+
+
+def _runs_unavailable() -> dict:
+    return {"available": False, "runs": [], "error": "数据库不可用：请检查 DATABASE_URL 配置与数据库服务状态"}
+
+
+@app.get("/api/runs")
+def list_runs(scenario_id: str | None = None) -> dict:
+    """阶段二：从 DB 查历史评测记录（列表，可选按 scenario_id 过滤）。
+
+    DB 不可用时返回 {"available": false, "runs": []}，不抛 500——
+    读历史是增强能力，数据库故障不应让前端崩溃。
+    """
+    from geoskillbench.api import db
+
+    try:
+        rows = db.list_reports(scenario_id=scenario_id)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("DB unavailable, /api/runs degraded: %s", exc)
+        result = _runs_unavailable()
+        result["error"] = str(exc)
+        return result
+    # 列表不返回全文，只返回元数据，避免大数据量
+    for row in rows:
+        row.pop("json", None)
+        row.pop("md", None)
+    return {"available": True, "runs": rows}
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: str) -> dict:
+    """阶段二：从 DB 查单条评测记录（含报告全文）。DB 不可用返回 503。"""
+    from geoskillbench.api import db
+
+    try:
+        row = db.get_report(run_id)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("DB unavailable, /api/runs/{id} degraded: %s", exc)
+        raise HTTPException(status_code=503, detail=f"数据库不可用：{exc}")
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    return row

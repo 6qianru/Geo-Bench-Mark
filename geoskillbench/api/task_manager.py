@@ -91,7 +91,7 @@ class TaskManager:
             loop.call_soon_threadsafe(asyncio.create_task, self._handle_runner_event(task.task_id, event))
 
         try:
-            result = await asyncio.to_thread(TestRunner().run, task.scenario_path, task.output_dir, emit, task.run_config)
+            result = await asyncio.to_thread(TestRunner().run, task.scenario_path, task.output_dir, emit, task.run_config, task.task_id)
             task.status = "completed" if result.status == "passed" else "failed"
             task.result = result.model_dump()
             task.updated_at = utc_now()

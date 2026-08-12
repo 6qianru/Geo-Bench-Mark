@@ -276,8 +276,22 @@ platform 则通过 HTTP 调用它、收集它的最终回答、跑断言、出�
   json.dumps 默认 ensure_ascii=True，中文会转成 \uXXXX 纯 ASCII，
   所以平台真实路径不受影响。验证时 curl 改用 ASCII 输入即可。
 
+坑3：后端改了代码但行为不变 → uvicorn 没加 --reload
+  症状：跑 scenario 时 RUN_AGENT 阶段报 error，但同样的代码用 CLI
+  直接跑就是 PASSED。排查到最后发现：正在运行的后端进程（旧 PID）是
+  用 `.venv\Scripts\python.exe -m uvicorn geoskillbench.api.app:app
+  --host 0.0.0.0 --port 8000` 启动的，没有 `--reload`，加载的是改动前的
+  旧代码。改完源码它根本不知道，还在用旧逻辑跑。
+  修复：后端启动命令加 `--reload`（scripts/start_backend.sh 里有，但
+  Windows 上 source .venv/bin/activate 会失败，需要直接调
+  `.venv/Scripts/python.exe -m uvicorn ... --reload`）。
+  [理由] 这是"环境/进程"类坑，不是代码 bug。判断方法是隔离变量：
+  先用 CLI 直接跑一遍同一 scenario（绕过后端进程），如果 CLI 正常、
+  走 API 就不正常，十有八九是进程加载了旧代码。改代码之前先确认
+  后端进程是怎么起的、带没带 --reload。
+
 [理由] 这类坑记下来比代码本身更值钱：下次任何人看到"mock server 挂了"
-  "curl 中文解码失败"，直接有答案。
+  "curl 中文解码失败""改了代码没生效"，直接有答案。
 
 --------------------------------------------------------------------------------
 6. 设计决策复盘（为什么这么做，回头看是否成立）
@@ -302,11 +316,168 @@ D5 judge.enabled 顺带修复：当时发现是死配置，顺手修了。这属
    tool_start/tool_end（按 run_id 配对）解析为 ToolCallRecord 并写入报告。
    agent_test 场景现在可以使用 tool_called / tool_sequence / tool_argument_equals
    断言。不上报工具调用时 tool_calls 为空、断言判失败而非报错（黑盒兼容）。
-3) _agent_test/ 目录（mock server + 2 个 mock scenario + 报告）：
-   待定保留（作契约参考 mock）还是删除。注意 mock 仍是标准 SSE 格式，与真实
-   逐行 JSON 格式不同——若保留，建议 mock server 改为模拟真实格式以便离线验证。
+3) _agent_test/ 目录【已处理】：已删除，内容转存为顶层 examples/agent_test_mock/
+   离线示例。mock server 已升级为模拟真实格式（逐行 JSON：event: token /
+   tool_event / add_message + JSON 三层嵌套），不再是早期推断的标准 SSE
+   格式，与 Agent接入契约.md 第 4 节实测格式一致；SSE 示例 scenario 顺带演示
+   tool_called 断言。examples/ 不在 scenarios/ 下，不被平台扫描，不影响运行。
 4) 改造计划文档阶段一的 checkbox：已实施，可标记完成状态。
 5) 阶段二（DB 持久化）、阶段三（前端 case 上传）未动，按计划顺序推进。
+6) 报告误报修复【已完成】：final_response_contains 空断言恒过 bug 已修
+   （见第 8 节）。但要注意：这类"空断言必然通过"的模式是否存在于其它
+   断言类型中，是后续加新断言时的默认检查点。
+7) markdown 报告 / 前端 Run Result 展示补全【已完成】（见第 8 节）：
+   Tool Calls 带出入参、完整对话、Errors 区已展示。当前仍未做 run_id
+   区分文件名的持久化（阶段二范围），同一 scenario 重跑仍覆盖旧报告。
+
+--------------------------------------------------------------------------------
+8. 第二轮迭代（2026-08）：报告误报修复 + 真实联调 + 展示补全
+--------------------------------------------------------------------------------
+触发点：用户建了第一个真实 agent_test scenario（agent_external_sqlQBQP，
+指向真实 Agentx Server 192.168.13.130:8490），跑完后发现报告"只看懂
+通没通过"，且暴露出一个严重误报——RUN_AGENT 失败、最终回答为空时
+overall status 仍是 passed。
+
+--- 8.1 误报根因（三层）---
+  误报现象：RUN_AGENT FAILED + final_response 为空，但 overall status =
+  passed。这个结果毫无意义——回答都没拿到，凭什么通过？
+
+  三层根因：
+  1) 断言恒真 bug（最深的一层）：_final_response_contains 读的是
+     assertion.values，而断言值是单值 version（assertion.value，契约文档
+     也写的 value:），values 恒为空 → all([]) == True → 断言恒通过。
+     也就是说这条断言从来就没真的校验过。
+  2) judge.enabled 死配置：scenario 里 judge.enabled: false 时，evaluate
+     没任何地方检查该开关，仍走硬编码启发式扣分（见 3.8）。对黑盒外部
+     agent 回答里没有"结果数据/句柄/CRS"这些词，被白白扣分。
+  3) overall status 聚合不含 RUN_AGENT 阶段结果：runner.py:285 的
+     status = assertion_result.passed and judge_result.passed，只聚合
+     断言与 judge，不含阶段状态。RUN_AGENT 失败也能"通过"。
+
+  修复：
+  - 断言引擎：_final_response_contains 改为兼容 value 和 values 两种写法，
+    都缺时判 failed（不再恒真）。
+  - judge_runtime：evaluate() 开头检查 scenario.judge.enabled，为 false
+    直接返回 JudgeResult(passed=assertion_result.passed)，不再扣分。
+  - overall status 语义未改（断言×judge），但 1)+2) 修掉后，误报从根上
+    消除——回答为空时断言必失败，status 必为 failed。
+
+  [理由] 这是"配置写了但断言没校验"的典型：问题不在 runner 的 status
+  聚合逻辑（那是对的），而在断言内部读错了字段。修断言比改聚合语义安全，
+  聚合语义牵一发动全身（既有 agent_skill_test 报告依赖它）。
+
+--- 8.2 真实联调（推翻 mock 假设）---
+  之前 4.2/4.3 用 mock 验证的是"标准 SSE + 浅层 outputs"，真实服务一接就
+  暴露两处格式不符（这正是契约文档标注的"待实测项"落点）：
+  - stream=false（JSON）：最终回答在 outputs[0].outputs[0].results
+    .message.data.text 三层嵌套，原 _extract_text 够不到 → 提取为空。
+  - stream=true（SSE）：每行是一个完整 JSON（event: token / add_message /
+    tool_event），不是标准 SSE 的 `data:` 前缀 → 原 _parse_sse 全丢。
+    最终回答 = 所有 event: token 的 data.chunk 按序拼接。
+  - 真实接口会上报 tool_event（推翻硬结论 3）。
+  修复：重写 _parse_sse / _extract_text 适配真实格式，同时保留对 mock
+  标准 SSE 的兼容分支。重跑用户场景 → RUN_AGENT PASSED，final_response
+  提取出完整回答，final_response_contains "完成" 真实命中，status passed
+  为真通过。
+
+--- 8.3 tool_calls 增强（完成计划遗留项 2）---
+  真实 SSE 里的 tool_event 携带工具名/入参/出参。实现：
+  - _parse_sse 改为返回 (text, tool_calls) 二元组；解析 tool_event →
+    ToolCallRecord（tool_start/tool_end 通过 run_id 配对，output 在
+    tool_end 的 data.output 里）。
+  - send_message 把 tool_calls 传入 ExecutorStepResult。
+  - 兼容"不上报工具调用"：没有 tool_event 时 tool_calls 为空列表，
+    断言工具类断言判 failed 而非报错（黑盒信任边界，见 Agent接入契约）。
+  - 结果：agent_test 场景现在可以用 tool_called / tool_sequence /
+    tool_argument_equals 断言，契约文档第 5 节同步更新。
+
+--- 8.4 展示补全（报告 / 前端）---
+  之前 markdown 报告与前端 Run Result 都只显示"通没通过 + 基础信息"。
+  补全：
+  - markdown（report_generator.py）：Tool Calls 区每个调用展示
+    ### N. name (status) + 入参/出参 JSON code block；Conversation 区
+    ### N. role + text code block；Errors 区。保留 Stage/Assertions/
+    Final Response。
+  - 前端（App.jsx ResultDetail 组件 + styles.css）：最终回答、工具调用
+    （含出入参）、完整对话、断言、错误区，原始 JSON 折叠进 <details>。
+  - 效果：用户跑完一个 scenario，报告/页面直接看到"最终回答 + 用了哪些
+    工具 + 入参出参 + 完整对话"，不需要再手动翻 JSON。
+
+--- 8.5 本轮结论 ---
+  - 误报是"空断言恒真"与"死配置"叠加，两者都是"配置写对了但没生效"
+    的一类问题。这类问题只有靠真实数据跑一遍才能暴露——mock 全通过，
+    因为 mock 是照着代码写的，自然不会逆着代码出错。
+  - 真实联调是阶段一的验收点：mock 验证的是"契约下 executor 逻辑对"，
+    真实联调验证的是"真实格式下提取对"。两者缺一不可。
+  - 新断言类型开发时必须默认加一条规则：values 为空 → failed，禁止
+    all([]) 恒真这种写法。
+
+--------------------------------------------------------------------------------
+9. 阶段二实施（2026-08）：评测报告数据库持久化
+--------------------------------------------------------------------------------
+背景：原架构把任务历史全部存在内存（task_manager._tasks），后端一重启
+历史全丢；报告文件按 {scenario_id}.json 命名，同场景重跑直接覆盖，无法
+回归对比。阶段二目标是"跑完之后能不能查到"。
+
+与改造计划原方案的差异（三处简化）：
+1) 不建 runs 元数据表，只建一张 reports 表存报告全文（json + md）。
+   改造计划原写"存 result_json"，实际报告全文已经包含所有信息，且前端
+   直接可用。agent 结果地图不重复存——报告里有 iServer 数据服务 URL。
+2) 不抄 agent-geo-arena 连接层。本机没有该项目，且 SQLAlchemy 连接层是
+   标准写法，直接写（db.py 约 90 行）。
+3) DATABASE_URL 留空时本地自动 fallback 到 SQLite 文件库（reports.db），
+   填 PostGIS 连接串即切服务器库，代码零改动。这是"本地开发不依赖远端、
+   部署切库不改码"的典型做法。
+
+改动清单（按文件）：
+- pyproject.toml：+sqlalchemy、psycopg[binary]、python-dotenv
+- geoskillbench/api/db.py（新增）：连接层 + RunReport ORM（run_id 主键、
+  scenario_id 索引、json_content/md_content 全文）。_database_url() 空→sqlite，
+  非空→PostGIS；sessionmaker + create_all 懒初始化；save_report 用 merge
+  （同 run_id 幂等覆盖）。
+- geoskillbench/models/result.py：TestResult +run_id: str = ""（默认空，兼容
+  旧报告读取）。
+- geoskillbench/runner.py：run() +run_id 参数，未传则 uuid4().hex 自动生成，
+  注入两处 TestResult 构造（成功/异常路径）。
+- geoskillbench/api/task_manager.py：把 task.task_id 作为 run_id 传给 runner，
+  任务 ID 与报告 ID 统一。
+- geoskillbench/reports/report_generator.py：write_reports 在写文件后调
+  _persist_to_db() 写 DB；DB 写入失败只 warn 不中断主流程（评测结果已在
+  文件系统，持久化是增强能力不是主链路）。
+- geoskillbench/api/app.py：+GET /api/runs（列表，可选 scenario_id 过滤，
+  不含全文）、+GET /api/runs/{run_id}（详情含全文）。
+- .env（新增，已进 .gitignore）：DATABASE_URL= 留空 → 本地 SQLite。
+- .gitignore：+ .env、reports.db
+
+[理由] 若干设计取舍：
+- run_id 由 runner 生成而非调用方硬造：CLI 直跑、API 跑都能自动获得，
+  不强制调用方配合。
+- 报告文件命名本次没改成 run_id：DB 已经解决"同场景重跑覆盖"，文件系统
+  仍按 scenario_id 命名保留现状，避免动 /api/reports 前端逻辑。这是刻意的
+  范围控制——如果连文件层也要区分，是独立的增强，不属于阶段二最小闭环。
+- DB 写失败不抛：评测 run 不能因为数据库问题失败。文件系统报告是主产物，
+  DB 是补充。
+
+验证（本地 SQLite）：
+- CLI 直跑 example mock scenario：run_id 自动生成，reports.db 出现记录
+  （json 2012 字符 + md 1056 字符）。
+- 同场景跑两次 → 2 条独立记录，run_id 不同 → 多次运行不覆盖 ✅
+- list_reports 按 scenario_id 过滤正常；不存在场景返回 0 条。
+- TestClient 测 API：GET /api/runs 列表不含全文；/api/runs/{run_id} 详情
+  含全文；404 正常；过滤正常。
+- 无 .env（清空环境变量）时 fallback SQLite 正常。
+
+遗留：
+- CREATE EXTENSION postgis 延后——连接串没配，部署服务器填 DATABASE_URL
+  时一并执行。
+- 前端 Task History 已接 /api/runs【已完成】：前端 Task History 区块改为读
+  /api/runs（DB 持久化历史，重启不丢），点击历史行加载该 run 报告全文到
+  Run Result 区（复用 ResultDetail 渲染）。DB 读故障时 /api/runs 返回
+  {"available": false, ...}，前端显示错误提示而非崩溃。Reports 区块未切
+  （仍读文件系统 /api/reports）——那是另一个区块，如需要可后补。
+- /api/runs 读容错【已完成】：列表 DB 故障返回 {"available": false, "runs":
+  [], "error": ...} 不 500；详情 DB 故障返回 503。写路径原本就有容错
+  （report_generator try/except），读写健壮性现已对齐。
 
 --------------------------------------------------------------------------------
 附录：本次改动文件清单
@@ -326,6 +497,20 @@ D5 judge.enabled 顺带修复：当时发现是死配置，顺手修了。这属
   geoskillbench/executors/factory.py
   geoskillbench/runtime/judge_runtime.py
   geoskillbench/api/app.py
+
+第二轮迭代（第 8 节）新增/修改：
+新增：
+  scenarios/agent_external_sqlQBQP.yml        # 用户建的真实 agent_test 场景
+  reports/json/agent_sqlQBQP.json             # 真实联调报告（JSON）
+  reports/markdown/agent_sqlQBQP.md           # 真实联调报告（markdown）
+修改：
+  geoskillbench/assertions/assertion_engine.py  # 8.1 空断言恒真修复
+  geoskillbench/runtime/judge_runtime.py         # 8.1 judge.enabled 生效
+  geoskillbench/executors/http_agent_executor.py# 8.2/8.3 SSE/JSON 重写 + tool_calls
+  geoskillbench/reports/report_generator.py      # 8.4 markdown 报告补全
+  frontend/src/App.jsx                           # 8.4 ResultDetail 组件
+  frontend/src/styles.css                        # 8.4 展示样式
+  docs/Agent接入契约.md                          # 8.3 断言可用性矩阵更新
 
 ================================================================================
 （复盘结束）

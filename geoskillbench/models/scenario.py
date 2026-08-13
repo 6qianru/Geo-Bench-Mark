@@ -9,7 +9,7 @@ class RuntimeConfig(BaseModel):
     executor: str = "langgraph"
     agent_model: str = "rule-based-agent"
     actor_model: str = "rule-based-actor"
-    judge_model: str = "rule-based-judge"
+    judge_model: str = ""  # 空 = 跟随 agent_model（迭代 2 LLM judge）；配 rule-based-* 开头或别名缺失则显式降级规则判定
     max_turns: int = 6
     timeout_seconds: int = 180
     memory_enabled: bool = False
@@ -98,6 +98,7 @@ class AssertionConfig(BaseModel):
 class JudgeConfig(BaseModel):
     enabled: bool = True
     rubric: list[str] = Field(default_factory=list)
+    include_conversation: bool = False  # 默认只喂 最终回答+工具调用+断言结果；true 时追加对话（截断）
 
 
 class PassCriteria(BaseModel):
@@ -117,6 +118,7 @@ class AgentConfig(BaseModel):
     stream_response: bool = False
     timeout_seconds: int = 120
     session_id: str | None = None
+    description: str = ""  # 外部 agent 能力说明，喂给 orchestrator 系统提示词（决定发什么指令、何时算达成）
 
 
 class TargetConfig(BaseModel):

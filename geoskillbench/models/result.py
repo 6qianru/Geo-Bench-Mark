@@ -82,6 +82,11 @@ class JudgeResult(BaseModel):
     reason: str = ""
     issues: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
+    # 判定模式：llm=LLM判定；rule-skill=完整规则(含句柄/CRS契约扣分，仅 skill 场景)；
+    # rule-agent=宽松规则(跳过句柄/CRS，agent 场景)；disabled=场景显式关闭；error=判定失败。
+    # 默认 rule-skill：存量报告(多为 skill 场景)反序列化不崩且语义贴近。
+    judge_mode: Literal["llm", "rule-skill", "rule-agent", "disabled", "error"] = "rule-skill"
+    model: str = ""  # LLM 判定时记录所用模型别名
 
 
 class TestResult(BaseModel):

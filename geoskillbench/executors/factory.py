@@ -4,6 +4,7 @@ from geoskillbench.executors.base import Executor
 from geoskillbench.executors.http_agent_executor import HttpAgentExecutor
 from geoskillbench.executors.langgraph_executor import LangGraphExecutor
 from geoskillbench.executors.nanobot_executor import NanobotExecutor
+from geoskillbench.executors.orchestrator_executor import OrchestratorExecutor
 from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
 
 
@@ -17,4 +18,6 @@ class ExecutorFactory:
             return NanobotExecutor(adapter)
         if normalized == "http_agent":
             return HttpAgentExecutor(adapter)
+        if normalized == "orchestrator":
+            return OrchestratorExecutor(adapter)
         raise ValueError(f"Unsupported executor: {executor_name}")

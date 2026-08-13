@@ -41,6 +41,10 @@ class HttpAgentExecutor(Executor):
             api_key = os.environ.get(api_key_env)
             if api_key:
                 headers.setdefault("Authorization", f"Bearer {api_key}")
+        # 评测要求每次 run 都是"全新会话"：场景未显式配固定 session_id 时，
+        # 生成随机 id 注入，避免外部 agent 服务端按 flow_id 复用上次会话/缓存，
+        # 复读上一次的回答而污染评测结果。想测持久会话可显式配置 session_id。
+        initial_session_id = agent.get("session_id") or str(uuid.uuid4())
         state = {
             "endpoint": endpoint,
             "query_params": dict(agent.get("query_params") or {}),
@@ -48,7 +52,7 @@ class HttpAgentExecutor(Executor):
             "body": dict(agent.get("body") or {}),
             "stream_response": bool(agent.get("stream_response", False)),
             "timeout_seconds": float(agent.get("timeout_seconds", 120)),
-            "session_id": agent.get("session_id"),
+            "session_id": initial_session_id,
         }
         session_id = str(uuid.uuid4())
         self.sessions[session_id] = state

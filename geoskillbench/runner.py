@@ -243,6 +243,7 @@ class TestRunner:
                     "final_response": final_response,
                     "datasets": final_datasets,
                     "output_artifacts": output_artifacts,
+                    "external_interactions": recorder.external_interactions,
                 }
             )
             stage_results["RUN_AGENT"] = "FAILED" if run_failed or not final_response else "PASSED"
@@ -280,6 +281,8 @@ class TestRunner:
                 stage_results=dict(stage_results),
                 passed=judge_result.passed,
                 score=judge_result.score,
+                judge_mode=judge_result.judge_mode,
+                model=judge_result.model,
             )
 
             stage_results["GENERATE_REPORT"] = "RUNNING"

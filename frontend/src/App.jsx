@@ -14,31 +14,35 @@ async function fetchJson(path, options) {
   return response.json();
 }
 
-function prettyEvent(event) {
-  if (!event) return "";
-  const type = event.type || "event";
-  const stage = event.task?.current_stage || event.payload?.stage || "-";
-  const status = event.task?.status || event.payload?.status || "-";
-  const executor = event.task?.run_config?.executor || event.payload?.executor || "-";
-  return `${type} | executor=${executor} | stage=${stage} | status=${status}`;
-}
-
 function ResultDetail({ result }) {
   const fr = result.final_output?.final_response || "";
   const toolCalls = result.tool_calls || [];
   const conversation = result.conversation || [];
   const assertions = result.assertions || [];
   const errors = result.errors || [];
+  const externalInteractions = result.final_output?.external_interactions || [];
+  const judge = result.judge || {};
+  const hasJudge = typeof judge === "object" && Object.keys(judge).length > 0;
+  const scorePct = judge.score != null ? Math.round(judge.score * 100) : null;
+  // judge_mode 为迭代 2（LLM judge）新增字段；老数据没有时按 reason 反推状态标签
+  const modeLabel = hasJudge
+    ? {
+        llm: "LLM 判定",
+        "rule-skill": "规则判定·skill契约",
+        "rule-agent": "规则判定·宽松",
+        disabled: "已禁用",
+        error: "判定错误",
+      }[judge.judge_mode] ||
+      (typeof judge.reason === "string" && judge.reason.includes("Judge disabled")
+        ? "已禁用"
+        : "规则判定")
+    : "";
 
   const jsonBlock = (obj) =>
     obj && typeof obj === "object" ? JSON.stringify(obj, null, 2) : String(obj ?? "");
 
   return (
     <div className="result-detail">
-      <div className="result-section">
-        <h4>最终回答</h4>
-        <pre className="result-text">{fr || "(空)"}</pre>
-      </div>
       <div className="result-section">
         <h4>工具调用</h4>
         {toolCalls.length === 0 ? (
@@ -47,21 +51,71 @@ function ResultDetail({ result }) {
           <ul className="list compact">
             {toolCalls.map((call, index) => (
               <li key={index}>
-                <div className="tool-row">
-                  <strong>{call.tool_name}</strong>
-                  <span className={call.status === "success" ? "pill ok" : "pill bad"}>{call.status}</span>
-                </div>
-                <div className="json-label">入参</div>
-                <pre>{jsonBlock(call.arguments)}</pre>
-                {call.result ? (
-                  <>
-                    <div className="json-label">出参</div>
-                    <pre>{jsonBlock(call.result)}</pre>
-                  </>
-                ) : null}
+                <details className="tool-item">
+                  <summary>
+                    <span className="tool-arrow">▸</span>
+                    <strong>{call.tool_name}</strong>
+                    <span className={call.status === "success" ? "pill ok" : "pill bad"}>{call.status}</span>
+                  </summary>
+                  <div className="json-label">入参</div>
+                  <pre>{jsonBlock(call.arguments)}</pre>
+                  {call.result ? (
+                    <>
+                      <div className="json-label">出参</div>
+                      <pre>{jsonBlock(call.result)}</pre>
+                    </>
+                  ) : null}
+                </details>
               </li>
             ))}
           </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>最终回答</h4>
+        <pre className="result-text">{fr || "(空)"}</pre>
+      </div>
+      <div className="result-section">
+        <h4>判定结果</h4>
+        {!hasJudge ? (
+          <p className="muted">(无 judge 结果)</p>
+        ) : (
+          <>
+            <div className="judge-header">
+              <span className={judge.passed ? "pill ok" : "pill bad"}>
+                {judge.passed ? "passed" : "failed"}
+              </span>
+              {scorePct != null && <span className="judge-score">{scorePct}%</span>}
+              <span className="pill mode">{modeLabel}</span>
+              {judge.model ? <span className="muted">模型: {judge.model}</span> : null}
+            </div>
+            <div className="json-label">原因</div>
+            <pre className="result-text">{judge.reason || ""}</pre>
+            {judge.issues?.length ? (
+              <>
+                <div className="json-label">问题</div>
+                <ul className="list compact">
+                  {judge.issues.map((item, index) => (
+                    <li key={index} className="assertion bad">
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+            {judge.suggestions?.length ? (
+              <>
+                <div className="json-label">建议</div>
+                <ul className="list compact">
+                  {judge.suggestions.map((item, index) => (
+                    <li key={index}>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </>
         )}
       </div>
       <div className="result-section">
@@ -76,6 +130,28 @@ function ResultDetail({ result }) {
                   {message.role}
                 </strong>
                 <pre className="msg-content">{jsonBlock(message.content)}</pre>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>外部智能体交互</h4>
+        {externalInteractions.length === 0 ? (
+          <p className="muted">(无外部交互记录)</p>
+        ) : (
+          <ul className="list compact">
+            {externalInteractions.map((interaction, index) => (
+              <li key={index}>
+                <strong className="role-user">指令 {interaction.turn}</strong>
+                <pre className="msg-content">{interaction.instruction || ""}</pre>
+                <strong className="role-assistant">外部回答</strong>
+                <pre className="msg-content">{interaction.response || ""}</pre>
+                {interaction.tool_calls?.length ? (
+                  <p className="muted">
+                    外部工具调用: {interaction.tool_calls.map((call) => call.tool_name).join(", ")}
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -126,7 +202,6 @@ export default function App() {
   const [validation, setValidation] = useState(null);
   const [tools, setTools] = useState([]);
   const [currentTask, setCurrentTask] = useState(null);
-  const [taskEvents, setTaskEvents] = useState([]);
   const [runResult, setRunResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -228,7 +303,6 @@ export default function App() {
     setLoading(true);
     setError("");
     setRunResult(null);
-    setTaskEvents([]);
     try {
       const task = await fetchJson("/api/tasks", {
         method: "POST",
@@ -261,7 +335,6 @@ export default function App() {
         setCurrentTask(task);
         setTasks((previous) => [task, ...previous.filter((item) => item.task_id !== task.task_id)]);
       }
-      setTaskEvents((previous) => [payload, ...previous].slice(0, 80));
       if (payload.payload?.result) {
         setRunResult(payload.payload.result);
       }
@@ -396,20 +469,23 @@ export default function App() {
           <div className="result-grid">
             <article>
               <h3>Current task</h3>
-              <pre>{currentTask ? JSON.stringify(currentTask, null, 2) : "No active task."}</pre>
+              <pre className="scroll-box">{currentTask ? JSON.stringify(currentTask, null, 2) : "No active task."}</pre>
             </article>
             <article>
               <h3>Stage state</h3>
               <ul className="list compact">
                 {Object.entries(stageResults).length ? (
                   Object.entries(stageResults).map(([stage, status]) => (
-                    <li key={stage}>
-                      <strong>{stage}</strong>
+                    <li key={stage} className={`stage-${status.toLowerCase()}`}>
+                      <strong>
+                        {stage}
+                        <span className="stage-dot" />
+                      </strong>
                       <span>{status}</span>
                     </li>
                   ))
                 ) : (
-                  <li>
+                  <li className="stage-pending">
                     <strong>No stages yet</strong>
                     <span>Create a task to stream progress.</span>
                   </li>
@@ -431,25 +507,6 @@ export default function App() {
               <pre>{tools.length ? JSON.stringify(tools, null, 2) : "No tool listing yet."}</pre>
             </article>
           </div>
-        </section>
-
-        <section className="panel">
-          <h2>Live Events</h2>
-          <ul className="list compact">
-            {taskEvents.length ? (
-              taskEvents.map((event, index) => (
-                <li key={`${event.type}-${index}`}>
-                  <strong>{prettyEvent(event)}</strong>
-                  <span>{event.task?.updated_at}</span>
-                </li>
-              ))
-            ) : (
-              <li>
-                <strong>No events yet</strong>
-                <span>SSE updates will appear here.</span>
-              </li>
-            )}
-          </ul>
         </section>
 
         <section className="panel">

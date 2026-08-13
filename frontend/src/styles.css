@@ -251,6 +251,16 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+/* 固定高度 + 内部滚动（Current task JSON 滑窗） */
+.scroll-box {
+  height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: #fffefb;
+}
+
 .muted {
   color: var(--muted);
   font-size: 13px;
@@ -289,6 +299,26 @@ button:disabled {
   color: var(--danger);
 }
 
+.pill.mode {
+  background: rgba(102, 102, 102, 0.14);
+  color: var(--text-secondary, #8a94a6);
+  text-transform: none;
+}
+
+.judge-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.judge-score {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .role-assistant {
   color: var(--accent-strong);
 }
@@ -310,8 +340,83 @@ button:disabled {
 
 details.result-section summary {
   cursor: pointer;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--accent-strong);
   font-weight: 600;
+}
+
+/* 工具调用条目：箭头折叠区（▸ 展开转 ▾） */
+.tool-item summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-arrow {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 12px;
+  transition: transform 150ms ease;
+}
+
+.tool-item[open] .tool-arrow {
+  transform: rotate(90deg);
+}
+
+.tool-item .json-label {
+  margin-top: 8px;
+}
+
+.tool-item pre {
+  margin-top: 6px;
+}
+
+/* Stage state 状态着色：边框 + stage 名后小点（在 styles.css 末尾追加） */
+.stage-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* 未进行：灰 */
+.list li.stage-pending { border-color: #9aa0a6; }
+.list li.stage-pending .stage-dot { background-color: #9aa0a6; }
+
+/* 跳过（agent_test 的 LOAD_SKILL 等）：中性蓝灰 */
+.list li.stage-skipped { border-color: #8a94a6; }
+.list li.stage-skipped .stage-dot { background-color: #8a94a6; }
+
+/* 通过：绿 */
+.list li.stage-passed { border-color: #2f9e44; }
+.list li.stage-passed .stage-dot { background-color: #2f9e44; }
+
+/* 失败：红 */
+.list li.stage-failed { border-color: #c92a2a; }
+.list li.stage-failed .stage-dot { background-color: #c92a2a; }
+
+/* 进行中：黄闪烁 */
+.list li.stage-running { animation: stage-blink-border 1.2s ease-in-out infinite; }
+.list li.stage-running .stage-dot { animation: stage-blink-dot 1.2s ease-in-out infinite; }
+
+@keyframes stage-blink-border {
+  0%, 100% { border-color: #e8890c; }
+  50% { border-color: rgba(232, 137, 12, 0.25); }
+}
+
+@keyframes stage-blink-dot {
+  0%, 100% { background-color: #e8890c; }
+  50% { background-color: rgba(232, 137, 12, 0.25); }
 }
 
 @media (max-width: 900px) {

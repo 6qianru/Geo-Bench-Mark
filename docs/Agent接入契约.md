@@ -66,9 +66,9 @@ agent:
 | `body` | dict | 固定请求体字段（`input_type`/`output_type`/`tweaks` 等） |
 | `stream_response` | bool | `true` 时按 SSE 流式解析响应 |
 | `timeout_seconds` | int | 单次请求超时 |
-| `session_id` | str \| null | 可选，初始会话 ID |
+| `session_id` | str \| null | 可选，固定会话 ID。**不配时每次 run 自动生成随机 uuid**，保证外部 agent 每次评测都是全新会话（隔离记忆/缓存，避免复读上次回答污染结果）。想测持久会话（多轮上下文）才显式配置 |
 
-`input_value` 与 `session_id` 由 executor 动态注入 body，不写死在 YAML。
+`input_value` 与 `session_id` 由 executor 动态注入 body，不写死在 YAML。**注意：未显式配 `session_id` 时，`session_id` 是每次 run 随机生成的，不是写死的——目的是评测隔离。**
 
 ## 3. Executor 行为（HttpAgentExecutor）
 
@@ -172,4 +172,48 @@ judge:
 pass_criteria:
   required_assertions_passed: true
   judge_score_min: 0.8
+```
+
+## 7. orchestrator 模式：本地 agent 多轮指挥外部 agent
+
+> 对应迭代 1（见 `docs/GeoSkillBench-迭代1-多轮指挥实现计划.md`）。与第 2~6 节的**直接一问一答**模式不同，本模式引入本地 agent（LangGraph ReAct）作为"操作者"。
+
+### 7.1 行为差异
+
+| 项 | 直接模式（`http_agent`） | orchestrator 模式（`orchestrator`） |
+|---|---|---|
+| user_task 语义 | 直接透传给外部 agent | 作为**目标**，由本地 agent 拆解 |
+| 多轮 | 依赖外部 `session_id` 上下文，一问一答 | 本地 agent 自主发多条指令，读响应决定下一步 |
+| 终止 | 每次请求返回即结束 | 本地 agent 发 `[FINAL]` 结束；`max_turns` 硬兜底 |
+| 外部协议 | 无需遵守 `[NEED_INTERACTION]/[FINAL]` | 本地 agent 单方面发出 `[FINAL]`，外部 agent 仍无需遵守 |
+| 配置 | `runtime.executor: http_agent` | `runtime.executor: orchestrator`，且需配真实 `agent_model` |
+
+### 7.2 额外配置
+
+- `runtime.executor: orchestrator`
+- `runtime.agent_model`：**必填真实模型别名**（models.yaml），无启发式兜底；缺模型/缺 endpoint/缺 LangGraph 依赖 → 直接报错。
+- `runtime.max_turns`：最多向外部 agent 发送的指令数；超限本地 agent 被强制以 `[FINAL]` 收尾。
+- `agent.description`：外部 agent 能力说明，喂给本地 agent 决定发什么指令、何时算达成。
+
+### 7.3 记录与断言
+
+- 每轮 `指令/回答` 记入 `external_interactions`（报告 markdown 与前端展示）。
+- 外部 agent 上报的 `tool_event` 仍解析为 `tool_calls`，`tool_called` / `tool_sequence` / `tool_argument_equals` 断言可用性不变（取决于外部是否上报）。
+- `final_response` 为本地 agent 的 `[FINAL]` 总结，`final_response_contains` 对它判定。
+
+示例：
+
+```yaml
+runtime:
+  executor: orchestrator
+  agent_model: deepseek-v4-flash
+  max_turns: 5
+agent:
+  type: http
+  endpoint: http://<host>:8490/agentx/workflowstudio/api/v1/run/<flow_id>
+  query_params: { stream: "true" }
+  stream_response: true
+  body: { input_type: chat, output_type: chat }
+  description: 能对 GIS 数据集执行查询、叠加求交等空间分析的智能体
+user_task: 对北京市与中心城区求交
 ```

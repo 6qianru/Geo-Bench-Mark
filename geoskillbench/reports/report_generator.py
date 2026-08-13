@@ -17,7 +17,7 @@ class ReportGenerator:
             f"- Scenario ID: `{result.scenario_id}`",
             f"- Status: `{result.status}`",
             f"- Duration: `{result.duration_ms} ms`",
-            f"- Judge Score: `{result.judge.get('score', 0)}`",
+            f"- Judge Score: `{result.judge.get('score', 0)}` (mode: `{result.judge.get('judge_mode', '')}`)",
             "",
             "## Stage Results",
         ]
@@ -26,6 +26,20 @@ class ReportGenerator:
         lines.extend(["", "## Assertions"])
         for item in result.assertions:
             lines.append(f"- `{item['type']}`: `{'passed' if item['passed'] else 'failed'}` - {item['message']}")
+        lines.extend(["", "## Judge"])
+        judge = result.judge or {}
+        lines.append(f"- Mode: `{judge.get('judge_mode', '')}`")
+        lines.append(f"- Model: `{judge.get('model', '') or '(规则判定)'}`")
+        lines.append(f"- Score: `{judge.get('score', 0)}`")
+        lines.append(f"- Passed: `{judge.get('passed', False)}`")
+        if judge.get("reason"):
+            lines.append(f"- Reason: {judge['reason']}")
+        if judge.get("issues"):
+            lines.append("- Issues:")
+            lines.extend(f"  - {item}" for item in judge["issues"])
+        if judge.get("suggestions"):
+            lines.append("- Suggestions:")
+            lines.extend(f"  - {item}" for item in judge["suggestions"])
         lines.extend(["", "## Tool Calls"])
         if result.tool_calls:
             for index, call in enumerate(result.tool_calls, start=1):
@@ -54,6 +68,17 @@ class ReportGenerator:
                 lines.append(f"```text\n{content}\n```")
         else:
             lines.append("- (无对话记录)")
+        external = result.final_output.get("external_interactions", []) if isinstance(result.final_output, dict) else []
+        if external:
+            lines.extend(["", "## External Agent Interactions"])
+            for interaction in external:
+                lines.append(f"### 指令 {interaction.get('turn', '?')}")
+                lines.append("发给外部智能体:")
+                lines.append(f"```text\n{interaction.get('instruction', '')}\n```")
+                lines.append("外部智能体回答:")
+                lines.append(f"```text\n{interaction.get('response', '')}\n```")
+                for call in interaction.get("tool_calls") or []:
+                    lines.append(f"- 外部工具: `{call.get('tool_name')}` (`{call.get('status')}`)")
         lines.extend(["", "## Final Response", "", result.final_output.get("final_response", "")])
         lines.extend(["", "## Errors"])
         if result.errors:

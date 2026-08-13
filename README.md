@@ -102,11 +102,11 @@ Create `models.yaml` in the repo root if you want to use a model alias with the 
 
 ```yaml
 models:
-  qwen-max:
+  deepseek-v4-flash:
     provider: openai_compatible
-    model: qwen-max
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key_env: DASHSCOPE_API_KEY
+    model: deepseek-v4-flash
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
 ```
 
 Then point a scenario at that alias, for example:
@@ -114,5 +114,5 @@ Then point a scenario at that alias, for example:
 ```yaml
 runtime:
   executor: langgraph
-  agent_model: qwen-max
+  agent_model: deepseek-v4-flash
 ```

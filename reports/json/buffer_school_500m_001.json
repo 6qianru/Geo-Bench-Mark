@@ -1,8 +1,9 @@
 {
+  "run_id": "fd3516a5ba8f4c32a893ccea29cc5036",
   "scenario_id": "buffer_school_500m_001",
   "scenario_name": "学校周边 500 米缓冲区分析",
   "status": "passed",
-  "duration_ms": 21,
+  "duration_ms": 13,
   "stage_results": {
     "LOAD_SCENARIO": "PASSED",
     "PREPARE_DATA": "PASSED",
@@ -51,7 +52,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-11T09:42:01.659460+00:00",
+      "recorded_at": "2026-08-13T07:12:04.468217+00:00",
       "order": 1
     },
     {
@@ -70,7 +71,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-11T09:42:01.659478+00:00",
+      "recorded_at": "2026-08-13T07:12:04.468247+00:00",
       "order": 2
     },
     {
@@ -91,7 +92,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-11T09:42:01.659483+00:00",
+      "recorded_at": "2026-08-13T07:12:04.468270+00:00",
       "order": 3
     }
   ],
@@ -161,8 +162,12 @@
     "score": 1.0,
     "passed": true,
     "reason": "智能体按场景完成了主要流程。",
-    "issues": [],
-    "suggestions": []
+    "issues": [
+      "LLM judge 不可用：未配置真实 judge 模型（judge_model/agent_model = rule-based-agent），已降级为规则判定。"
+    ],
+    "suggestions": [],
+    "judge_mode": "rule-skill",
+    "model": ""
   },
   "conversation": [
     {

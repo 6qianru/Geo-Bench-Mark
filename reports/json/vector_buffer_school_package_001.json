@@ -1,8 +1,9 @@
 {
+  "run_id": "38a96a5feeec400490ace6412361faea",
   "scenario_id": "vector_buffer_school_package_001",
   "scenario_name": "使用矢量分析 Skill Package 完成学校 500 米缓冲区分析",
   "status": "passed",
-  "duration_ms": 134,
+  "duration_ms": 79,
   "stage_results": {
     "LOAD_SCENARIO": "PASSED",
     "PREPARE_DATA": "PASSED",
@@ -186,7 +187,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "skill_internal",
-      "recorded_at": "2026-08-12T01:57:05.502580+00:00",
+      "recorded_at": "2026-08-12T09:13:13.577255+00:00",
       "order": 5
     },
     {
@@ -203,7 +204,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "skill_internal",
-      "recorded_at": "2026-08-12T01:57:05.502633+00:00",
+      "recorded_at": "2026-08-12T09:13:13.577274+00:00",
       "order": 6
     },
     {
@@ -226,7 +227,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-12T01:57:05.502645+00:00",
+      "recorded_at": "2026-08-12T09:13:13.577280+00:00",
       "order": 7
     },
     {
@@ -245,7 +246,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-12T01:57:05.502651+00:00",
+      "recorded_at": "2026-08-12T09:13:13.577285+00:00",
       "order": 8
     },
     {
@@ -262,7 +263,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "skill_internal",
-      "recorded_at": "2026-08-12T01:57:05.502657+00:00",
+      "recorded_at": "2026-08-12T09:13:13.577780+00:00",
       "order": 9
     },
     {
@@ -279,7 +280,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "skill_internal",
-      "recorded_at": "2026-08-12T01:57:05.502663+00:00",
+      "recorded_at": "2026-08-12T09:13:13.577795+00:00",
       "order": 10
     },
     {
@@ -300,7 +301,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-12T01:57:05.502719+00:00",
+      "recorded_at": "2026-08-12T09:13:13.577800+00:00",
       "order": 11
     }
   ],
@@ -407,7 +408,7 @@
     {
       "path": "references/S0_执行计划.md",
       "title": "执行计划",
-      "loaded_at": "2026-08-12T01:57:05.488555+00:00",
+      "loaded_at": "2026-08-12T09:13:13.567825+00:00",
       "loaded_by": "executor",
       "content_hash": "f198198e1e0f2661ae42acd67ba37efe10e06f94214bff877aa4fa270f49da68",
       "order": 1
@@ -415,7 +416,7 @@
     {
       "path": "references/00_数据确认.md",
       "title": "数据确认",
-      "loaded_at": "2026-08-12T01:57:05.492351+00:00",
+      "loaded_at": "2026-08-12T09:13:13.570414+00:00",
       "loaded_by": "executor",
       "content_hash": "41e97d00c0ae059162f5d982f0f752b721eb803745e135a1ab2c3709cbea83ac",
       "order": 2
@@ -423,7 +424,7 @@
     {
       "path": "references/01_缓冲区分析.md",
       "title": "缓冲区分析",
-      "loaded_at": "2026-08-12T01:57:05.497823+00:00",
+      "loaded_at": "2026-08-12T09:13:13.573450+00:00",
       "loaded_by": "executor",
       "content_hash": "1593a1d944c58e90f9046aa31c52ddb441d2711a87fbbcc6165542b09d382061",
       "order": 3
@@ -431,7 +432,7 @@
     {
       "path": "references/10_结果展示.md",
       "title": "结果展示",
-      "loaded_at": "2026-08-12T01:57:05.499638+00:00",
+      "loaded_at": "2026-08-12T09:13:13.575083+00:00",
       "loaded_by": "executor",
       "content_hash": "008f3e1d3c450ee8e41ea3b1a0b1c78ab8afb7bfa4ddb043a0c39264323c3f0f",
       "order": 4

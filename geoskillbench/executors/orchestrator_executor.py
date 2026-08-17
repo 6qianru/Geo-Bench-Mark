@@ -8,9 +8,12 @@ from uuid import uuid4
 
 from geoskillbench.executors.base import Executor
 from geoskillbench.executors.http_agent_executor import HttpAgentExecutor
+from geoskillbench.executors.orchestrator_flows import FLOW_REGISTRY, available_flows, send_external_instruction
 from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
 from geoskillbench.models.result import ExecutorSession, ExecutorSessionRequest, ExecutorStepResult, ToolCallRecord
 from geoskillbench.runtime.llm import build_llm, load_models_config
+
+import geoskillbench.executors.example_flows  # noqa: F401  # 注册示例流程(keyword/pipeline)；不需要示例可删这行
 
 
 def now_iso() -> str:
@@ -20,23 +23,84 @@ def now_iso() -> str:
 @dataclass
 class OrchestratorSessionState:
     request: ExecutorSessionRequest
-    agent: Any  # LangGraph ReAct agent
+    agent: Any  # 可 invoke 的图（create_react_agent 产物 或 编译后的 StateGraph）
     http_executor: HttpAgentExecutor
     http_session_id: str
     max_turns: int
+    flow: str = "react"  # 当前任务流名（agent.flow，见 orchestrator_flows.FLOW_REGISTRY）
+    models_config: dict[str, Any] = field(default_factory=dict)  # models.yaml 配置，供流程内 build_llm
     instruction_count: int = 0
     pending_tool_calls: list[ToolCallRecord] = field(default_factory=list)
     external_interactions: list[dict[str, Any]] = field(default_factory=list)
+    react_messages: list[Any] = field(default_factory=list)  # react 流程跨轮对话累积（追问 actor 后不丢上下文）
+
+
+def _build_operator_prompt(request: ExecutorSessionRequest, agent: dict[str, Any]) -> str:
+    """react 流程的操作者系统提示词（迭代 1 模板，行为保持）。"""
+    description = (agent.get("description") or request.test_context.get("scenario_name", "")).strip()
+    rules = [
+        "把目标分解成外部智能体可执行的指令，一次只发一条。",
+        "读取它的回答判断进展：缺参数→补下一条指令；它反问→先回答它；它做完了→进入第 3 步。",
+        "目标达成时，以 [FINAL] 开头输出总结，必须包含结果信息。",
+        f"最多发送 {request.max_turns} 条指令；超限仍未达成也要以 [FINAL] 说明进展与受阻原因。",
+        "不得编造外部智能体没有提供的结果。",
+    ]
+    if agent.get("ask_user"):
+        rules.append(
+            "如果外部智能体反问、且所需信息不在用户消息或已有上下文中、你也无法合理推断，"
+            "就不要发指令，直接以 [NEED_INTERACTION] 开头输出要向用户确认的问题，等用户回答后再继续。"
+        )
+    numbered = "\n".join(f"{i}. {r}" for i, r in enumerate(rules, start=1))
+    return (
+        "你是 GeoSkillBench 评测平台的外部智能体操作者。你的目标是用户消息给出的任务。\n"
+        f"外部智能体能力：{description or '未提供，请在对话中自行判断。'}\n"
+        "你可以通过 ask_external_agent 工具向它发送指令。规则：\n"
+        f"{numbered}\n"
+    )
+
+
+def _build_external_agent_tool(state: OrchestratorSessionState):
+    """react 流程的工具：向外部 agent 发一条指令。转发/记录逻辑复用 send_external_instruction。"""
+    from langchain_core.tools import tool
+
+    @tool("ask_external_agent")
+    def ask_external_agent(instruction: str) -> str:
+        """向外部智能体发送一条指令，返回它的回答文本。"""
+        return send_external_instruction(state, instruction)
+
+    return ask_external_agent
+
+
+def _build_react_agent(state: OrchestratorSessionState):
+    """react 流程：langgraph prebuilt ReAct（原 create_session 里的构建逻辑，行为零变化）。"""
+    from langchain_core.messages import SystemMessage
+    from langgraph.prebuilt import create_react_agent
+
+    request = state.request
+    llm = build_llm(
+        request.role_model_config.get("model", ""),
+        temperature=0.0,
+        config=state.models_config,
+    )
+    system_prompt = _build_operator_prompt(request, request.agent or {})
+    return create_react_agent(
+        llm,
+        tools=[_build_external_agent_tool(state)],
+        prompt=SystemMessage(content=system_prompt),
+    )
+
+
+FLOW_REGISTRY["react"] = _build_react_agent
 
 
 class OrchestratorExecutor(Executor):
-    """本地 agent（LangGraph ReAct）作为操作者，多轮指挥外部 agent 完成目标的 Executor。
+    """本地 agent（LangGraph）作为操作者，多轮指挥外部 agent 完成目标的 Executor。
 
     架构（见 docs/GeoSkillBench-迭代1-多轮指挥实现计划.md）：
-    - 本地 ReAct agent 注册唯一工具 ask_external_agent。
-    - 工具内部复用 HttpAgentExecutor 的 session：转发指令、解析 SSE/JSON、维持外部多轮上下文。
-    - 外部 agent 上报的 tool_event 转成 ToolCallRecord 流入 recorder（tool_called 断言可用）。
-    - 多轮 = ReAct 工具循环；本地 agent 判定目标达成后发 [FINAL]，max_turns 硬兜底。
+    - 流程可选：agent.flow = react（默认，ReAct）/ scripted（内置固定节点）/ 注册表自定义。
+    - 共享原语 send_external_instruction 复用 HttpAgentExecutor 的 session：转发指令、解析 SSE/JSON、
+      维持外部多轮上下文；外部 agent 上报的 tool_event 转成 ToolCallRecord 流入 recorder。
+    - 多轮 = 流程内部循环；本地 agent 判定目标达成后发 [FINAL]，max_turns 硬兜底。
 
     与 http_agent 的区别：http_agent 把 user_task 直接透传外部 agent（一问一答）；
     orchestrator 由本地 LLM agent 自主拆解目标、逐条发指令、读取响应决定下一步。
@@ -64,10 +128,14 @@ class OrchestratorExecutor(Executor):
         if missing:
             raise ValueError(f"orchestrator 缺少 LangGraph 运行时依赖: {', '.join(missing)}")
 
-        from langchain_core.messages import SystemMessage
-        from langgraph.prebuilt import create_react_agent
+        flow = (agent.get("flow") or "react").strip().lower()
+        builder = FLOW_REGISTRY.get(flow)
+        if builder is None:
+            raise ValueError(
+                f"未注册的 flow：{flow!r}。可用：{', '.join(available_flows())}。"
+                "自定义流程请用 orchestrator_flows.register_flow 注册后在此引用。"
+            )
 
-        llm = build_llm(model_name, temperature=0.0, config=self.models_config)
         # 内部复用 HttpAgentExecutor 管理外部 agent session（SSE/JSON 解析、session_id 多轮上下文都在这里）
         http_executor = HttpAgentExecutor(self.adapter)
         http_session = http_executor.create_session(request)
@@ -79,13 +147,10 @@ class OrchestratorExecutor(Executor):
             http_executor=http_executor,
             http_session_id=http_session.session_id,
             max_turns=request.max_turns,
+            flow=flow,
+            models_config=self.models_config,
         )
-        system_prompt = self._build_operator_prompt(request, agent)
-        state.agent = create_react_agent(
-            llm,
-            tools=[self._build_external_agent_tool(state)],
-            prompt=SystemMessage(content=system_prompt),
-        )
+        state.agent = builder(state)
         self.sessions[session_id] = state
         return ExecutorSession(
             session_id=session_id,
@@ -94,32 +159,59 @@ class OrchestratorExecutor(Executor):
             skill_id=request.skill_id,
             created_at=now_iso(),
             runtime_mode="real",
-            runtime_metadata={"model": model_name, "max_turns": request.max_turns},
+            runtime_metadata={"model": model_name, "max_turns": request.max_turns, "flow": flow},
         )
 
     def send_message(self, session_id: str, message: str) -> ExecutorStepResult:
         state = self.sessions[session_id]
+        recursion_limit = state.max_turns * 4 + 6  # 指令数上限 + 收尾余量，作流程循环的第二道安全阀
 
-        from langchain_core.messages import AIMessage, HumanMessage
+        if state.flow == "react":
+            from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-        # 指令数上限 + 收尾余量，作 ReAct 循环的第二道安全阀（create_react_agent 不接受 recursion_limit）
-        recursion_limit = state.max_turns * 4 + 6
-        result_state = state.agent.invoke(
-            {"messages": [HumanMessage(content=message)]},
-            config={"recursion_limit": recursion_limit},
-        )
-        final_ai_content = ""
-        for msg in reversed(result_state.get("messages", [])):
-            if isinstance(msg, AIMessage) and msg.content:
-                final_ai_content = str(msg.content)
-                break
+            # 跨轮累积：追问 actor 后第二次 invoke 时 agent 仍记得之前的对话与外部交互
+            result_state = state.agent.invoke(
+                {"messages": state.react_messages + [HumanMessage(content=message)]},
+                config={"recursion_limit": recursion_limit},
+            )
+            state.react_messages = [
+                m for m in result_state.get("messages", []) if not isinstance(m, SystemMessage)
+            ]
+            final_ai_content = ""
+            for msg in reversed(result_state.get("messages", [])):
+                if isinstance(msg, AIMessage) and msg.content:
+                    final_ai_content = str(msg.content)
+                    break
+        else:
+            # scripted/自定义：以固定输入键 invoke，从结果 state 取 final_response
+            result_state = state.agent.invoke(
+                {
+                    "goal": message,
+                    "latest_response": "",
+                    "pending_instruction": "",
+                    "summary": "",
+                    "blocker": "",
+                    "done": False,
+                    "final_response": "",
+                },
+                config={"recursion_limit": recursion_limit},
+            )
+            final_ai_content = str(result_state.get("final_response") or "")
 
         tool_calls = list(state.pending_tool_calls)
         state.pending_tool_calls.clear()
+
+        # 追问协议：仅 react 流程且 ask_user=True 时，agent 输出 [NEED_INTERACTION] → 等用户(actor)回答；
+        # 否则保持 finished=True（现状，含 [FINAL]）。非 react 流程不识别（示例 flow 无此输出）。
+        need_interaction = (
+            state.flow == "react"
+            and bool((state.request.agent or {}).get("ask_user"))
+            and final_ai_content.strip().startswith("[NEED_INTERACTION]")
+        )
         return ExecutorStepResult(
             response=final_ai_content,
-            finished=True,
-            need_interaction=False,
+            finished=not need_interaction,
+            need_interaction=need_interaction,
             tool_calls=tool_calls,
         )
 
@@ -127,50 +219,3 @@ class OrchestratorExecutor(Executor):
         state = self.sessions.pop(session_id, None)
         if state is not None:
             state.http_executor.close_session(state.http_session_id)
-
-    # ---- 工具与提示词 ----
-
-    def _build_external_agent_tool(self, state: OrchestratorSessionState):
-        from langchain_core.tools import tool
-
-        recorder = state.request.test_context.get("_recorder")
-
-        @tool("ask_external_agent")
-        def ask_external_agent(instruction: str) -> str:
-            """向外部智能体发送一条指令，返回它的回答文本。"""
-            state.instruction_count += 1
-            if state.instruction_count > state.max_turns:
-                return (
-                    f"你已达到指令数上限（{state.max_turns} 条）。必须停止发送新指令，"
-                    "请以 [FINAL] 开头总结当前进展与结果。"
-                )
-            step = state.http_executor.send_message(state.http_session_id, instruction)
-            for call in step.tool_calls:
-                state.pending_tool_calls.append(call)
-            fallback_text = step.error_message or "(外部智能体无文本回复)"
-            interaction = {
-                "turn": len(state.external_interactions) + 1,
-                "instruction": instruction,
-                "response": step.response or fallback_text,
-                "tool_calls": [call.model_dump() for call in step.tool_calls],
-                "error_message": step.error_message,
-            }
-            state.external_interactions.append(interaction)
-            if recorder is not None:
-                recorder.record_external_interaction(interaction)
-            return step.response or fallback_text
-
-        return ask_external_agent
-
-    def _build_operator_prompt(self, request: ExecutorSessionRequest, agent: dict[str, Any]) -> str:
-        description = (agent.get("description") or request.test_context.get("scenario_name", "")).strip()
-        return (
-            "你是 GeoSkillBench 评测平台的外部智能体操作者。你的目标是用户消息给出的任务。\n"
-            f"外部智能体能力：{description or '未提供，请在对话中自行判断。'}\n"
-            "你可以通过 ask_external_agent 工具向它发送指令。规则：\n"
-            "1. 把目标分解成外部智能体可执行的指令，一次只发一条。\n"
-            "2. 读取它的回答判断进展：缺参数→补下一条指令；它反问→先回答它；它做完了→进入第 3 步。\n"
-            "3. 目标达成时，以 [FINAL] 开头输出总结，必须包含结果信息。\n"
-            f"4. 最多发送 {request.max_turns} 条指令；超限仍未达成也要以 [FINAL] 说明进展与受阻原因。\n"
-            "5. 不得编造外部智能体没有提供的结果。\n"
-        )

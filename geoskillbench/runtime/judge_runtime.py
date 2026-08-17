@@ -4,6 +4,7 @@ from geoskillbench.models.result import AssertionResult, JudgeResult
 from geoskillbench.models.scenario import Scenario
 from geoskillbench.models.test_context import TestContext
 from geoskillbench.recorder.execution_recorder import ExecutionRecorder
+from geoskillbench.runtime.askback import classify_external_reply
 from geoskillbench.runtime.llm import build_llm, load_models_config
 from geoskillbench.runtime.llm_judge import LlmJudgeUnavailable, run_llm_judge
 
@@ -75,6 +76,19 @@ class JudgeEngine:
         for item in scenario.expected_behavior.should_not:
             if item and item in final_response:
                 issues.append(f"Final response violated expected behavior: {item}")
+                score = max(0.0, score - 0.2)
+
+        if not use_skill_contracts and scenario.judge.penalize_no_ask_back:
+            # 外部 agent 反问维度（规则镜像，与 executor 分类同源 classify_external_reply==ask）：
+            # 全程无任何反问 → 连续扣分。用 classify 而非 looks_like_question 单独判定，
+            # 避免"完成回复含'数据集/格式'关键词"被误判为反问（complete 优先语义与 executor 一致）。
+            asked_back = any(
+                classify_external_reply(str(it.get("response", ""))) == "ask"
+                for it in recorder.external_interactions
+            )
+            if not asked_back:
+                issues.append("External agent did not ask clarifying questions for missing required info before executing.")
+                suggestions.append("Configure the external agent to ask back when required info is missing.")
                 score = max(0.0, score - 0.2)
 
         if use_skill_contracts:

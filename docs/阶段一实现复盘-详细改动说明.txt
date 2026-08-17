@@ -201,7 +201,7 @@ platform 则通过 HTTP 调用它、收集它的最终回答、跑断言、出�
 改动点：/api/executors 响应里增加 http_agent 条目（静态 dict：
   id=http_agent, available=True, runtime_mode=compatibility）。
 [理由] 前端 executor 下拉框读这个接口，不注册的话用户在前端看不到
-  这个 executor 可选。注意 HttpAgentExecutor 没有 LangGraphExecutor 那种
+  这个 executor 可选。注意 HttpAgentExecutor 没有 SkillExecutor 那种
   real_runtime_available / runtime_issue 属性，所以这里直接给静态值。
 
 --------------------------------------------------------------------------------
@@ -237,7 +237,7 @@ platform 则通过 HTTP 调用它、收集它的最终回答、跑断言、出�
   结论：schema/runner 改动对既有 skill 评测路径零影响。
 
 --- 4.5 API 层 ---
-  /api/executors → ['langgraph', 'nanobot', 'http_agent']
+  /api/executors → ['skill', 'nanobot', 'http_agent']
   /health → 200
   /api/scenarios → 200（scenarios/ 下 2 个既有文件正常列出；
   _agent_test/ 不在 scenarios/，不会污染前端列表）

@@ -48,10 +48,10 @@ MVP package behavior:
 
 The backend now exposes a pluggable session-based executor layer:
 
-- `langgraph`: default executor implementation for GeoSkillBench
+- `skill`: default executor implementation for GeoSkillBench (local skill evaluation; historical alias `langgraph`)
 - `nanobot`: nanobot-compatible executor contract
 
-Current `langgraph` behavior:
+Current `skill` behavior:
 
 - If `langchain`, `langgraph`, and `langchain-openai` are installed and `runtime.agent_model` points to a real model, GeoSkillBench uses the real LangGraph ReAct executor.
 - If the runtime dependencies are missing, or the scenario uses a compatibility model such as `rule-based-agent`, the system falls back to the shared heuristic executor.
@@ -98,7 +98,7 @@ python -m geoskillbench.cli run scenarios/buffer_school_500m_001.yml --output re
 
 ## Real Model Configuration
 
-Create `models.yaml` in the repo root if you want to use a model alias with the real `langgraph` executor:
+Create `models.yaml` in the repo root if you want to use a model alias with the real `skill` executor:
 
 ```yaml
 models:
@@ -113,6 +113,6 @@ Then point a scenario at that alias, for example:
 
 ```yaml
 runtime:
-  executor: langgraph
+  executor: skill
   agent_model: deepseek-v4-flash
 ```

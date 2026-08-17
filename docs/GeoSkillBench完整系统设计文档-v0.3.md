@@ -3472,7 +3472,7 @@ Scenario 或 RunConfig 可以增加：
 
 ```yaml
 runtime:
-  agent_backend: langgraph
+  agent_backend: skill
 ```
 
 未来可以支持：

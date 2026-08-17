@@ -163,7 +163,12 @@ class TestRunner:
                 test_context=test_context_dump,
                 tools=[tool.model_dump() if hasattr(tool, "model_dump") else tool for tool in scenario.mcp.tools.required + scenario.mcp.tools.optional],
                 agent=scenario.agent.model_dump() if scenario.agent else None,
-                role_model_config={"model": scenario.runtime.agent_model, "executor": runtime_executor},
+                role_model_config={
+                    "model": scenario.runtime.agent_model,
+                    "executor": runtime_executor,
+                    "actor_model": scenario.runtime.actor_model,  # external_driven 内部 LLM 模拟用户模型
+                    "actor": scenario.actor.model_dump() if scenario.actor else {},  # goal/profile/max_turns
+                },
                 max_turns=scenario.runtime.max_turns,
                 timeout_seconds=scenario.runtime.timeout_seconds,
                 memory_enabled=memory_enabled,
@@ -307,6 +312,7 @@ class TestRunner:
                     "runtime_mode": session.runtime_mode,
                     "runtime_metadata": session.runtime_metadata,
                     "output_artifacts": output_artifacts,
+                    "external_interactions": recorder.final_output.get("external_interactions", []),
                 },
                 loaded_skill_references=recorder.loaded_skill_references,
                 errors=recorder.errors,

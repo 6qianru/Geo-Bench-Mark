@@ -27,7 +27,7 @@
 ### 3.1 为什么选自由式 ReAct 而非脚本化流程（重点记录）
 
 1. **贴合"模拟人类操作"的评测目标**。真实人类操作者不照脚本走，而是根据外部 agent 的每一轮回答临场决定下一步。自由式 ReAct 的"推理 → 调工具 → 看结果 → 再推理"循环天然就是这个行为；脚本化流程（plan → 逐条照做 → verify → final）更像死流程，偏离评测意图。
-2. **复用代码库已验证的模式**。`LangGraphExecutor` 早已用 `create_react_agent`（prebuilt ReAct）跑通 skill 评测，自由式直接复用该模式，零新架构、零风险试点。
+2. **复用代码库已验证的模式**。`SkillExecutor` 早已用 `create_react_agent`（prebuilt ReAct）跑通 skill 评测，自由式直接复用该模式，零新架构、零风险试点。
 3. **少写代码、快速跑通**。自由式只需"一个工具 + 一段系统提示词"，多轮循环由 ReAct 内部完成；脚本化要手写 `StateGraph` node/edge/条件路由，量大且偏离目标。
 4. **外部 SUT 行为未知，脚本化过早固化**。外部 agent 会怎么回答、要不要反问、缺什么参数，真机跑之前全是未知。自由式能适应任意响应形状；脚本化在 SUT 行为摸清前极易写死、频繁返工。
 5. **终止判定有自然承载**。`[FINAL]` 协议由本地 agent 发出，自由式下它天然在"判断目标达成"时发，配合 `max_turns` 硬兜底即可收敛。
@@ -39,7 +39,7 @@
 - **绕开 langgraph 的"麻烦"**：用 prebuilt `create_react_agent`，不手写状态机/checkpointer。评测场景不需要持久化（每轮全新会话、可复现优先），这是省掉大量配置的正当理由。
 - **`http_agent` 直接模式保留**：orchestrator 作为新 executor 注册，旧场景零回归。
 - **无启发式兜底**：orchestrator 缺真实模型/缺 endpoint/缺依赖 → 直接 fail + 明确报错。与迭代 2 LLM judge 的"LLM 失败直接 fail 并报错"哲学一致：评测平台不该在没真正执行时静默成功。
-- **惰性 import 沿用惯例**：langgraph 在函数内 import，与 `LangGraphExecutor` 一致；代价是文件顶部看不到，用户提出过，已解释。
+- **惰性 import 沿用惯例**：langgraph 在函数内 import，与 `SkillExecutor` 一致；代价是文件顶部看不到，用户提出过，已解释。
 
 ## 4. 验证结果
 

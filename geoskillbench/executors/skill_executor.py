@@ -19,7 +19,7 @@ def now_iso() -> str:
 
 
 @dataclass
-class LangGraphSessionState:
+class SkillSessionState:
     request: ExecutorSessionRequest
     skill: AgentSkill
     agent: Any
@@ -31,10 +31,10 @@ class LangGraphSessionState:
     output_artifacts: dict[str, Any] = field(default_factory=dict)
 
 
-class LangGraphExecutor(HeuristicSessionExecutor):
+class SkillExecutor(HeuristicSessionExecutor):
     def __init__(self, adapter: MCPToolAdapter) -> None:
-        super().__init__(adapter=adapter, executor_type="langgraph")
-        self.real_sessions: dict[str, LangGraphSessionState] = {}
+        super().__init__(adapter=adapter, executor_type="skill")
+        self.real_sessions: dict[str, SkillSessionState] = {}
         self.models_config = load_models_config()
         self.real_runtime_available, self.runtime_issue = self._check_runtime_available()
         self.last_runtime_metadata: dict[str, Any] = {
@@ -68,8 +68,8 @@ class LangGraphExecutor(HeuristicSessionExecutor):
         try:
             llm = build_llm(model_name, temperature=0.0, config=self.models_config)
             system_prompt = self._build_system_prompt(request, skill)
-            state = LangGraphSessionState(request=request, skill=skill, agent=None, messages=[], reference_tool=reference_tool)
-            tools = self._build_langgraph_tools(state)
+            state = SkillSessionState(request=request, skill=skill, agent=None, messages=[], reference_tool=reference_tool)
+            tools = self._build_skill_tools(state)
             agent = create_react_agent(llm, tools=tools, prompt=SystemMessage(content=system_prompt))
             state.agent = agent
             self.real_sessions[session_id] = state
@@ -80,7 +80,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
                 "tool_count": len(tools),
             }
         except Exception as exc:
-            fallback_reason = f"LangGraph executor initialization failed: {exc}"
+            fallback_reason = f"Skill executor initialization failed: {exc}"
             self.compatibility_note = fallback_reason
             self.last_runtime_metadata = {
                 "runtime_mode": "compatibility",
@@ -95,7 +95,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
 
         return ExecutorSession(
             session_id=session_id,
-            executor_type="langgraph",
+            executor_type="skill",
             scenario_id=request.scenario_id,
             skill_id=request.skill_id,
             created_at=now_iso(),
@@ -172,7 +172,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
             )
         return base
 
-    def _build_langgraph_tools(self, state: LangGraphSessionState) -> list[Any]:
+    def _build_skill_tools(self, state: SkillSessionState) -> list[Any]:
         from langchain_core.tools import tool
 
         created_tools: list[Any] = []
@@ -269,7 +269,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
         if self.runtime_issue:
             return self.runtime_issue
         if not model_name:
-            return "No agent model configured for LangGraph executor."
+            return "No agent model configured for Skill executor."
         if model_name.startswith("rule-based"):
             return f"Model '{model_name}' is a heuristic compatibility model, so the executor is using the rule-based fallback path."
         return None

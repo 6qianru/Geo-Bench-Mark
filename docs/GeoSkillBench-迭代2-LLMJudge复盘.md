@@ -54,7 +54,7 @@
 
 ### 3.5 惰性 import 沿用惯例
 
-`langchain_core.messages` 在 `_build_messages` 内导入，与 `LangGraphExecutor`/`OrchestratorExecutor` 一致。
+`langchain_core.messages` 在 `_build_messages` 内导入，与 `SkillExecutor`/`OrchestratorExecutor` 一致。
 
 ### 3.6 前端零改动背后的铺垫价值
 

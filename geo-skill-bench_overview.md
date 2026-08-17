@@ -101,7 +101,7 @@ python -m geoskillbench.cli run scenarios/buffer_school_500m_001.yml --output re
 ### 4. Executor（被测智能体执行器）
 - **是什么**：实际运行"被测 Agent"的容器。输入用户任务 + Skill prompt + 工具集，输出对话、工具调用记录、最终回答。
 - **为什么重要**：它是"被测对象"与"测试框架"之间的唯一边界，`Executor` 抽象接口只有三个方法，下游断言/Judge/报告完全不关心 SUT 怎么跑出来的。
-- **涉及代码**：`geoskillbench/executors/base.py`、`langgraph_executor.py`、`heuristic_executor.py`、`nanobot_executor.py`、`factory.py`。
+- **涉及代码**：`geoskillbench/executors/base.py`、`skill_executor.py`、`heuristic_executor.py`、`nanobot_executor.py`、`factory.py`。
 
 ### 5. Assertion（断言）
 - **是什么**：确定性规则校验，一条断言 = 一条"必须成立的说法"，跑完逐条核对给出 passed/failed。
@@ -160,7 +160,7 @@ flowchart TD
     R --> JE["JudgeEngine"]
     R --> RG["ReportGenerator"]
 
-    EX --> LG["LangGraphExecutor<br/>真实 ReAct / 规则兜底"]
+    EX --> LG["SkillExecutor<br/>真实 ReAct / 规则兜底"]
     EX --> HE["HeuristicSessionExecutor<br/>纯规则"]
     MCP --> DS["Dataset Store<br/>(mock)"]
     LG --> RT["SkillReferenceTool<br/>按需加载 references"]
@@ -327,7 +327,7 @@ for turn_index in range(turn_limit):
 
 **职责**：
 - 定义统一 `Executor` 抽象（`base.py`）。
-- 提供三种实现：`LangGraphExecutor`（真实 ReAct / 规则兜底双路径）、`HeuristicSessionExecutor`（纯规则，无 LLM）、`NanobotExecutor`（占位壳，fallback 到规则）。
+- 提供三种实现：`SkillExecutor`（真实 ReAct / 规则兜底双路径）、`HeuristicSessionExecutor`（纯规则，无 LLM）、`NanobotExecutor`（占位壳，fallback 到规则）。
 - `factory.py` 按名字生产执行器。
 
 **文件清单**：
@@ -336,17 +336,17 @@ for turn_index in range(turn_limit):
 |------|------|
 | `base.py` | `Executor` 抽象基类（3 个抽象方法） |
 | `factory.py` | `ExecutorFactory.create(name, adapter)` |
-| `langgraph_executor.py` | 真实路径 `create_react_agent` + 兼容路径 fallback 判断 |
+| `skill_executor.py` | 真实路径 `create_react_agent` + 兼容路径 fallback 判断 |
 | `heuristic_executor.py` | 规则执行：正则推断数据集/距离 → 固定工具链 |
 | `nanobot_executor.py` | nanobot 占位，缺包时带 note fallback |
 
 **核心函数**：
 
-#### `LangGraphExecutor.create_session(request: ExecutorSessionRequest) -> ExecutorSession`
-- **位置**：`geoskillbench/executors/langgraph_executor.py:46`
+#### `SkillExecutor.create_session(request: ExecutorSessionRequest) -> ExecutorSession`
+- **位置**：`geoskillbench/executors/skill_executor.py:46`
 - **职责**：决定走"真实 LLM 路径"还是"规则兜底路径"，建会话。
 
-**关键逻辑**（`langgraph_executor.py:46-104` 主线）：
+**关键逻辑**（`skill_executor.py:46-104` 主线）：
 
 ```python
 def create_session(self, request):
@@ -398,7 +398,7 @@ def send_message(self, session_id, message):
 ```
 
 **说明 / 注意事项**：
-- `_fallback_reason`（`langgraph_executor.py:268`）：缺 `langchain/langgraph/langchain_openai` 之一、模型名以 `rule-based` 开头、或没配模型 → 兜底。
+- `_fallback_reason`（`skill_executor.py:268`）：缺 `langchain/langgraph/langchain_openai` 之一、模型名以 `rule-based` 开头、或没配模型 → 兜底。
 - `NanobotExecutor`（`nanobot_executor.py`）只要 `importlib.util.find_spec("nanobot")` 失败就带 `compatibility_note` 走规则。
 
 ---
@@ -421,7 +421,7 @@ def send_message(self, session_id, message):
 #### `MCPToolAdapter.invoke(tool_name, arguments) -> ToolCallRecord`
 - **位置**：`geoskillbench/mcp/mcp_tool_adapter.py:51`
 - **职责**：统一入口，任何工具调用都包成 `ToolCallRecord`（含参数、结果、状态、错误），供 recorder 记录、断言核对。
-- **调用关系**：被 HeuristicExecutor / LangGraphExecutor 的 @tool 包装函数调用。
+- **调用关系**：被 HeuristicExecutor / SkillExecutor 的 @tool 包装函数调用。
 
 **关键逻辑**：
 
@@ -639,7 +639,7 @@ async def event_stream(self, task_id):
     ├─ fixtures/fixture_manager.py:prepare() ← schools.geojson → DatasetContext
     ├─ mcp/mcp_tool_adapter.py            ← 注册数据集、建工具目录、校验 required
     ├─ loader/skill_loader.py:load()/render_prompt() ← 加载被测 Skill
-    ├─ executors/factory.py + langgraph/heuristic ← 建会话、多轮 send_message
+    ├─ executors/factory.py + skill/heuristic ← 建会话、多轮 send_message
     ├─ assertions/assertion_engine.py:run() ← 12 类断言
     ├─ runtime/judge_runtime.py:evaluate() ← 评分
     └─ reports/report_generator.py:write_reports() ← 落盘 JSON/MD
@@ -730,10 +730,10 @@ sequenceDiagram
 
 **业务含义**：同一套测试框架，底层执行器可切换——配了真实模型走 `create_react_agent`（LLM 自主决策 + 工具调用），否则走规则执行器（确定性、可复现、无需 API）。
 
-**触发判断**：`LangGraphExecutor.create_session` → `_fallback_reason(model_name)`：
+**触发判断**：`SkillExecutor.create_session` → `_fallback_reason(model_name)`：
 
 ```python
-# langgraph_executor.py:268
+# skill_executor.py:268
 def _fallback_reason(self, model_name):
     if self.runtime_issue:                      # 缺 langchain/langgraph/langchain-openai
         return self.runtime_issue
@@ -744,9 +744,9 @@ def _fallback_reason(self, model_name):
     return None
 ```
 
-**真实路径行为**（`langgraph_executor.py:175` `_build_langgraph_tools`）：把 `query_dataset_metadata` / `reproject_dataset` / `create_buffer` / `publish_map` 以及（Skill Package 时）`load_skill_reference` 包装成 `@tool`，交给 `create_react_agent`；`send_message` 逐轮 `state.agent.invoke`，从新消息里取最后一个 AI 文本判断 `[NEED_INTERACTION]` / `[FINAL]`。
+**真实路径行为**（`skill_executor.py:175` `_build_langgraph_tools`）：把 `query_dataset_metadata` / `reproject_dataset` / `create_buffer` / `publish_map` 以及（Skill Package 时）`load_skill_reference` 包装成 `@tool`，交给 `create_react_agent`；`send_message` 逐轮 `state.agent.invoke`，从新消息里取最后一个 AI 文本判断 `[NEED_INTERACTION]` / `[FINAL]`。
 
-**涉及文件**：`geoskillbench/executors/langgraph_executor.py`、`geoskillbench/runtime/llm.py`、`models.yaml.example`。
+**涉及文件**：`geoskillbench/executors/skill_executor.py`、`geoskillbench/runtime/llm.py`、`models.yaml.example`。
 
 ---
 
@@ -761,7 +761,7 @@ def _fallback_reason(self, model_name):
     ↓
 [2] skill_loader.py:render_prompt()        ← 只注入入口 + 索引 + 按需加载规则
     ↓
-[3] langgraph/heuristic executor           ← 若 skill.type == prompt_skill_package，注册 load_skill_reference 工具
+[3] skill/heuristic executor               ← 若 skill.type == prompt_skill_package，注册 load_skill_reference 工具
     ↓
 [4] skills/reference_tool.py:load_skill_reference(path) ← 安全读文件 + recorder.record_skill_reference_loaded
     ↓

@@ -912,7 +912,7 @@ skill:
   lazy_load_references: true
 
 runtime:
-  executor: langgraph
+  executor: skill
   agent_model: qwen3.5-32b
   actor_model: qwen3.5-14b
   judge_model: qwen3.5-32b
@@ -1266,7 +1266,7 @@ Reference Before Tool Compliance
 
 ```text
 Executor
-  ├── LangGraphExecutor
+  ├── SkillExecutor
   ├── NanobotExecutor
   └── AgentXExecutor
 ```

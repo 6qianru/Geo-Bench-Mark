@@ -20,3 +20,9 @@ models.yaml
 
 # 本地开发用的 SQLite 报告库（服务器用 PostGIS，不在仓库）
 reports.db
+
+# 评测运行产物（json/markdown 报告，由 run 生成）
+reports/
+
+# 编辑器个人配置
+.vscode/

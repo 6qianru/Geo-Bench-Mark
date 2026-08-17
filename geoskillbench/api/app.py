@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -9,9 +10,9 @@ from pydantic import BaseModel
 import yaml
 
 from geoskillbench.api.task_manager import TaskManager
-from geoskillbench.executors.langgraph_executor import LangGraphExecutor
+from geoskillbench.executors.skill_executor import SkillExecutor
 from geoskillbench.executors.nanobot_executor import NanobotExecutor
-from geoskillbench.models.scenario import SkillConfig
+from geoskillbench.models.scenario import Scenario, SkillConfig
 from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
 from geoskillbench.runner import TestRunner
 
@@ -31,6 +32,11 @@ class RunRequest(BaseModel):
     output_dir: str = "reports"
     executor: str | None = None
     memory_enabled: bool | None = None
+
+
+class ScenarioCreateRequest(BaseModel):
+    scenario: dict
+    overwrite: bool = False
 
 
 app = FastAPI(title="GeoSkillBench API", version="0.2.0")
@@ -168,6 +174,51 @@ def list_scenarios() -> list[dict]:
     return _scenario_listing()
 
 
+# ---- 新建场景（前端"新建 Scenario"表单落盘）----
+
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+@app.get("/api/scenarios/schema")
+def scenario_schema() -> list[dict]:
+    """返回前端"新建 Scenario"表单的定义（字段/必填/默认值/分组/模式联动）。"""
+    from geoskillbench.api.scenario_schema import get_form_schema
+
+    return get_form_schema()
+
+
+@app.post("/api/scenarios")
+def create_scenario(request: ScenarioCreateRequest) -> dict:
+    """校验前端提交的场景 dict，落盘为 scenarios/<id>.yml。
+
+    - id 同时用作文件名，做安全清洗（防路径穿越）；重复 id 且未显式 overwrite → 409。
+    - 复用 Scenario.model_validate 做完整校验（含"agent_skill_test 必须带 skill"等规则）。
+    - 清掉前端不填的空结构（空断言/预期行为/空 mcp/data），让生成的 yml 贴近手写。
+    """
+    data = dict(request.scenario)
+    scenario_id = str(data.get("id") or "").strip()
+    if not _SAFE_ID_RE.fullmatch(scenario_id):
+        raise HTTPException(400, "场景 ID 仅允许字母、数字、下划线、中划线")
+    target = SCENARIOS_DIR / f"{scenario_id}.yml"
+    if target.exists() and not request.overwrite:
+        raise HTTPException(409, f"场景 {scenario_id} 已存在，请确认是否覆盖？")
+
+    data.setdefault("target", {})
+    scenario = Scenario.model_validate(data)
+    payload = scenario.model_dump(exclude_none=True)
+    # 清空结构：前端常用字段表单不暴露的块（断言/预期行为/MCP/数据源），空时不写入
+    for key in ("expected_behavior", "assertions"):
+        if not payload.get(key):
+            payload.pop(key, None)
+    if not payload.get("mcp", {}).get("servers"):
+        payload.pop("mcp", None)
+    if not payload.get("data", {}).get("fixtures"):
+        payload.pop("data", None)
+
+    target.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return {"id": scenario.id, "path": f"scenarios/{target.name}"}
+
+
 @app.get("/api/skills")
 def list_skills() -> list[dict]:
     return _skill_listing()
@@ -208,16 +259,16 @@ def get_skill_file(skill_id: str, path: str) -> dict:
 @app.get("/api/executors")
 def list_executors() -> list[dict]:
     adapter = MCPToolAdapter()
-    langgraph = LangGraphExecutor(adapter)
+    skill = SkillExecutor(adapter)
     nanobot = NanobotExecutor(adapter)
     return [
         {
-            "id": "langgraph",
-            "name": "LangGraphExecutor",
-            "available": langgraph.real_runtime_available,
+            "id": "skill",
+            "name": "SkillExecutor",
+            "available": skill.real_runtime_available,
             "default": True,
-            "runtime_mode": "real" if langgraph.real_runtime_available else "compatibility",
-            "issue": langgraph.runtime_issue,
+            "runtime_mode": "real" if skill.real_runtime_available else "compatibility",
+            "issue": skill.runtime_issue,
         },
         {
             "id": "nanobot",

@@ -9,7 +9,7 @@ target:
   skill_id: gis_buffer_analysis
   skill_version: 1.0.0
 runtime:
-  executor: langgraph
+  executor: skill          # 历史别名 langgraph 仍兼容
   agent_model: rule-based-agent
   actor_model: rule-based-actor
   max_turns: 6

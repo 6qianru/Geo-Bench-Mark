@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class RuntimeConfig(BaseModel):
-    executor: str = "langgraph"
+    executor: str = "skill"  # skill=本地技能评测（历史别名 langgraph）；orchestrator=指挥外部 agent；http_agent=透传
     agent_model: str = "rule-based-agent"
     actor_model: str = "rule-based-actor"
     judge_model: str = ""  # 空 = 跟随 agent_model（迭代 2 LLM judge）；配 rule-based-* 开头或别名缺失则显式降级规则判定
@@ -99,6 +99,7 @@ class JudgeConfig(BaseModel):
     enabled: bool = True
     rubric: list[str] = Field(default_factory=list)
     include_conversation: bool = False  # 默认只喂 最终回答+工具调用+断言结果；true 时追加对话（截断）
+    penalize_no_ask_back: bool = False  # external_driven 场景：外部 agent 缺必要信息不反问自行猜测 → 连续扣分（LLM rubric + 规则镜像）；默认关=存量零回归
 
 
 class PassCriteria(BaseModel):
@@ -119,6 +120,11 @@ class AgentConfig(BaseModel):
     timeout_seconds: int = 120
     session_id: str | None = None
     description: str = ""  # 外部 agent 能力说明，喂给 orchestrator 系统提示词（决定发什么指令、何时算达成）
+    # orchestrator 任务流：react=现有 ReAct 模板（默认）；scripted=内置固定节点流程；
+    # 其它值=orchestrator_flows.FLOW_REGISTRY 里注册的自定义 flow 名
+    flow: str = "react"
+    # orchestrator 本地 agent 是否允许缺信息时向用户(actor)追问（默认关，存量场景零回归）
+    ask_user: bool = False
 
 
 class TargetConfig(BaseModel):

@@ -46,7 +46,7 @@ Executor 是整个测试系统中的“执行者”。它负责加载被测 Agen
 3. Executor 与 Test Runner / Actor / Judge / Assertion 的关系
 4. 推荐的 Executor 接口设计
 5. NanobotExecutor 的接入方式
-6. LangGraphExecutor 与 NanobotExecutor 的区别
+6. SkillExecutor 与 NanobotExecutor 的区别
 ```
 
 ---
@@ -103,7 +103,7 @@ GeoSkillBench Test Runner
 ├── Skill Loader
 │
 ├── Executor
-│   ├── LangGraphExecutor
+│   ├── SkillExecutor
 │   ├── NanobotExecutor
 │   ├── AgentXExecutor
 │   └── CustomExecutor
@@ -281,7 +281,7 @@ Tool Call 记录必须能被 GeoSkillBench 捕获。
 
 ```text
 Executor
-  ├── LangGraphExecutor
+  ├── SkillExecutor
   ├── NanobotExecutor
   ├── AgentXExecutor
   └── CustomExecutor
@@ -510,7 +510,7 @@ async def run_agent_with_actor(
 3. 每一轮的输入输出都可以被记录。
 4. 失败和超时更好处理。
 5. 不同 Executor 的行为更容易统一。
-6. 后续支持 LangGraphExecutor / AgentXExecutor 更方便。
+6. 后续支持 SkillExecutor / AgentXExecutor 更方便。
 ```
 
 如果让 nanobot 一次性完成完整任务，会出现：
@@ -728,7 +728,7 @@ Scenario 或 RunConfig 中可以增加：
 
 ```yaml
 runtime:
-  executor: langgraph
+  executor: skill
 ```
 
 或：
@@ -855,9 +855,9 @@ errors
 
 ---
 
-## 18. LangGraphExecutor 与 NanobotExecutor 对比
+## 18. SkillExecutor 与 NanobotExecutor 对比
 
-| 项目 | LangGraphExecutor | NanobotExecutor |
+| 项目 | SkillExecutor | NanobotExecutor |
 |---|---|---|
 | 控制力 | 高 | 取决于 nanobot 暴露能力 |
 | 状态机编排 | 强 | 需要适配 |
@@ -878,7 +878,7 @@ errors
 优先实现：
 
 ```text
-LangGraphExecutor
+SkillExecutor
 ```
 
 原因：
@@ -931,7 +931,7 @@ Tool-level assertions may be limited in NanobotExecutor mode.
 ```text
 GeoSkillBench Core 独立实现
 Executor 可插拔
-LangGraphExecutor 作为默认
+SkillExecutor 作为默认
 NanobotExecutor 作为可选
 ```
 
@@ -955,7 +955,7 @@ Executor
 
 ```text
 Executor Interface
-  ├── LangGraphExecutor
+  ├── SkillExecutor
   ├── NanobotExecutor
   ├── AgentXExecutor
   └── CustomExecutor
@@ -965,7 +965,7 @@ Executor Interface
 
 ```yaml
 runtime:
-  executor: langgraph
+  executor: skill
 ```
 
 或者：

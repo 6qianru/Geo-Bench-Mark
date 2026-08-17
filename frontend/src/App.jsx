@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ScenarioForm from "./ScenarioForm";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
@@ -198,6 +199,7 @@ export default function App() {
   const [runHistory, setRunHistory] = useState([]); // 来自 DB 的持久化历史（/api/runs）
   const [historyDbError, setHistoryDbError] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
+  const [showForm, setShowForm] = useState(false);
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [validation, setValidation] = useState(null);
   const [tools, setTools] = useState([]);
@@ -379,6 +381,21 @@ export default function App() {
     }
   }
 
+  async function loadScenariosOnly() {
+    try {
+      const scenarioData = await fetchJson("/api/scenarios");
+      setScenarios(scenarioData);
+      // 保留当前选中；若所选场景已不存在（如覆盖改名）则回退到第一个
+      setSelectedPath((previous) =>
+        scenarioData.some((scenario) => scenario.path === previous)
+          ? previous
+          : scenarioData[0]?.path || "",
+      );
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   const currentScenario = scenarios.find((scenario) => scenario.path === selectedPath);
   const stageResults = currentTask?.stage_results || {};
 
@@ -401,7 +418,13 @@ export default function App() {
 
       <main className="layout">
         <section className="panel">
-          <h2>Scenario</h2>
+          <div className="panel-head">
+            <h2>Scenario</h2>
+            <button className="btn-outline" onClick={() => setShowForm(true)}>
+              新建 Scenario
+            </button>
+          </div>
+          {showForm && <ScenarioForm onClose={() => setShowForm(false)} onSaved={loadScenariosOnly} />}
           <label className="field">
             <span>Select scenario</span>
             <select value={selectedPath} onChange={(event) => setSelectedPath(event.target.value)}>

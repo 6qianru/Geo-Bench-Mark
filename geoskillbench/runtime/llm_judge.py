@@ -45,6 +45,27 @@ def _tool_summary(recorder: ExecutionRecorder) -> list[dict[str, Any]]:
     return summary
 
 
+# external_driven 场景：judge 要评估"外部 agent 缺信息是否主动反问"时的 rubric 追加行
+_ASKBACK_RUBRIC_LINE = (
+    "外部智能体在缺少必要信息时是否主动反问澄清而非自行猜测执行；"
+    "即使最终结果正确，未反问也应酌情扣分。"
+)
+
+
+def _external_interaction_summary(recorder: ExecutionRecorder) -> list[dict[str, Any]]:
+    """外部 agent 每轮交互压缩（平台发了什么 → 外部回了什么），控制 token。"""
+    summary: list[dict[str, Any]] = []
+    for it in recorder.external_interactions[-10:]:
+        summary.append(
+            {
+                "turn": it.get("turn"),
+                "platform_said": str(it.get("instruction", ""))[:200],
+                "agent_reply": str(it.get("response", ""))[:200],
+            }
+        )
+    return summary
+
+
 def _build_input(
     scenario: Scenario,
     recorder: ExecutionRecorder,
@@ -60,6 +81,11 @@ def _build_input(
         ],
         "rubric": scenario.judge.rubric or DEFAULT_RUBRIC.get(scenario.type, DEFAULT_RUBRIC["agent_test"]),
     }
+    if scenario.judge.penalize_no_ask_back:
+        # 外部 agent 反问维度：喂逐轮交互 + rubric 追加一行（仅开关开启时，存量 judge 输入逐字节不变）
+        data["external_interactions"] = _external_interaction_summary(recorder)
+        if _ASKBACK_RUBRIC_LINE not in data["rubric"]:
+            data["rubric"] = list(data["rubric"]) + [_ASKBACK_RUBRIC_LINE]
     if scenario.judge.include_conversation:
         # 截断策略：最后 10 条消息、每条内容 500 字
         data["conversation"] = [
@@ -83,8 +109,11 @@ def _build_messages(scenario: Scenario, data: dict[str, Any], retry: bool) -> li
     return [system, HumanMessage(content)]
 
 
-def _extract_json(text: str) -> dict[str, Any] | None:
-    """宽松解析：先整体 json.loads，失败则正则截取第一个 {...} 再 parse。"""
+def extract_json(text: str) -> dict[str, Any] | None:
+    """宽松解析 LLM 输出为 dict：先整体 json.loads，失败则正则截取第一个 {...} 再 parse。
+
+    供 LLM judge 与 orchestrator scripted flow 等需要"LLM 输出结构化结果"的调用点共用。
+    """
     text = (text or "").strip()
     if not text:
         return None
@@ -146,7 +175,7 @@ def run_llm_judge(
         text = getattr(response, "content", response)
         if isinstance(text, list):
             text = "".join(str(part.get("text", "")) for part in text if isinstance(part, dict)) or str(text)
-        obj = _extract_json(str(text))
+        obj = extract_json(str(text))
         if obj is not None:
             try:
                 return _to_judge_result(obj, judge_model)

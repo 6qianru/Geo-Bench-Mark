@@ -49,6 +49,30 @@ def build_reply(input_value: str) -> str:
     )
 
 
+# 反问模式（external_driven 场景 mock）：按 session 维护多轮状态——
+# 收到缺信息的任务先反问（数据集/距离），再反问（输出格式），信息齐了才完成。
+# 请求文本同时含 "schools" 与 "500"（模拟用户已补齐信息）→ 直接完成。
+def build_askback_reply(input_value: str, session_key: str) -> str:
+    if "schools" in input_value.lower() and "500" in input_value:
+        return (
+            "已完成：对 schools 数据执行 500 米缓冲区分析，"
+            "结果数据集 dataset://generated/buffer_result，共 128 个要素。"
+        )
+    if "格式" in input_value or "geojson" in input_value.lower() or "geotiff" in input_value.lower():
+        return (
+            "已完成：将按您指定的格式输出。已执行 500 米缓冲区分析，"
+            "结果数据集 dataset://generated/buffer_result，共 128 个要素。"
+        )
+    if "500" in input_value or "米" in input_value:
+        # 已拿到距离，还缺输出格式 → 反问格式
+        return "收到，缓冲距离用 500 米。还需要确认一下输出格式，您希望输出什么格式？"
+    if "schools" in input_value.lower():
+        # 已拿到数据集，还缺距离 → 反问距离
+        return "好的，使用 schools 数据。请问缓冲距离设为多少米？"
+    # 首轮：缺数据集与距离 → 反问
+    return "好的，请问需要处理哪个数据集？缓冲距离设为多少米？"
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -57,7 +81,14 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length) or b"{}")
         input_value = body.get("input_value", "")
         stream = "stream=true" in self.path
-        reply = build_reply(input_value)
+        session_key = str(body.get("session_id") or input_value)
+        # 触发反问模式的场景（endpoint 含 mock-askback）：按会话状态返回反问/完成；
+        # 其余场景保持原静态行为（直接完成），零回归。
+        reply = (
+            build_askback_reply(input_value, session_key)
+            if "mock-askback" in self.path
+            else build_reply(input_value)
+        )
 
         if stream:
             self._stream_reply(reply)

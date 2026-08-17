@@ -217,3 +217,111 @@ agent:
   description: 能对 GIS 数据集执行查询、叠加求交等空间分析的智能体
 user_task: 对北京市与中心城区求交
 ```
+
+### 7.4 任务流配置（`agent.flow`）
+
+orchestrator 的任务流（本地 agent 怎么指挥外部 agent）可通过 `agent.flow` 选择，默认 `react`，不写即用默认，**零回归**。
+
+| 值 | 说明 |
+|---|---|
+| `react`（默认） | langgraph prebuilt ReAct：自由式循环，LLM 自主决定发指令/读响应/何时 `[FINAL]` |
+| `scripted` | 内置固定节点 StateGraph：每轮 = 生成一条指令 → 发外部 → 判定完成；终止判定 = `max_turns`/超限规则硬判 + LLM 判完成，结构固定可复现 |
+| 其它 | `orchestrator_flows.FLOW_REGISTRY` 里注册的自定义流程名 |
+
+```yaml
+agent:
+  type: http
+  endpoint: http://<host>:8490/agentx/workflowstudio/api/v1/run/<flow_id>
+  stream_response: true
+  flow: scripted          # 切到内置固定节点流程；省略/写 react 走默认
+  description: 能对 GIS 数据集执行查询、叠加求交等空间分析的智能体
+```
+
+**自定义流程（注册表扩展口）**：在任意模块里手写一个 `builder(state) -> 可 invoke 的图` 并用 `register_flow` 注册，然后在 orchestrator_executor 侧 import 触发注册，scenario 按名引用：
+
+```python
+# my_custom_flow.py
+from geoskillbench.executors.orchestrator_flows import register_flow, send_external_instruction
+
+@register_flow("my_flow")
+def build_my_flow(state):
+    # 用 langgraph StateGraph 手写固定节点，可复用 send_external_instruction 发指令/记录
+    # state: OrchestratorSessionState（含 request/http_session/max_turns/models_config）
+    ...
+```
+
+```python
+# orchestrator_executor.py 或你的入口处
+import my_custom_flow  # 触发注册，使 "my_flow" 进入 FLOW_REGISTRY
+```
+
+```yaml
+# scenario
+agent:
+  flow: my_flow
+```
+
+前置条件与 `react` 相同：`runtime.agent_model` 必须是 models.yaml 里的真实别名、`agent.endpoint` 必填、LangGraph 依赖就位。
+
+### 7.5 与模拟用户 actor 自动多轮（react 流程）
+
+orchestrator 场景默认是本地 agent 单方面指挥外部 agent。若希望本地 agent 缺信息时（外部 agent 反问、缺少数据集/参数）**向用户追问**，并由模拟用户 actor 自动回答，配置两处即可：
+
+```yaml
+agent:
+  flow: react        # 默认；v1 追问能力仅内置在 react 流程
+  ask_user: true     # 开启追问：本地 agent 无法推断所需信息时输出 [NEED_INTERACTION] 问题
+actor:
+  enabled: true
+  max_turns: 3       # 最多允许 agent↔actor 往返次数
+  goal: 使用 schools 数据对学校周边 500 米做缓冲区分析   # 模拟用户的目标/已知信息，回答追问时从中提取
+```
+
+**协议**：`ask_user: true` 时，本地 agent 输出 `[NEED_INTERACTION] <问题>` → orchestrator executor 返回 `need_interaction=true, finished=false` → runner 调 `ActorRuntime` 按关键词（哪个数据/缓冲距离/输出格式）从 `actor.goal` 提取回答，作为下一轮消息回传本地 agent → agent 拿答案继续指挥 → 最终 `[FINAL]`。多轮对话在 session 内累积，agent 不丢上下文。
+
+**覆盖范围**：`[NEED_INTERACTION]` 识别仅对 **react 流程且 `ask_user: true`** 生效；非 react 流程（scripted / pipeline / keyword / 自定义 flow）v1 未内置追问节点，需要时由 flow 作者按同一前缀协议自行实现（在 final_response 以 `[NEED_INTERACTION]` 开头即可让 runner 进入 actor 循环）。
+
+**注意**：`ask_user` 默认 `false`，存量场景行为不变。开启后本地 agent 在信息不足时可能多一轮追问往返，消耗 `runtime.max_turns` 的轮次。
+
+**动态候选选择**（2026-08 扩展）：除反问具体问题外，agent 也可能**列出候选让用户选**——如"可用数据集有 schools_a、schools_b、rivers，用哪个？"。`ActorRuntime` 识别"可选 / 候选 / 可用 / 可以选择 / 以下"引导的选项列表（支持顿号、中英文逗号、分号、竖线、'或'分隔，自动过滤问号尾巴），优先于关键词匹配处理：用 `actor.goal` 的目标词对候选做匹配（精确 > 子串包含 > 取第一个），匹配不上取第一个候选兜底，保证对话不断。配合 `react + ask_user` 可覆盖"agent 搜索数据集/功能后让用户选择确认"的场景。
+
+```yaml
+actor:
+  goal: 使用 schools 数据对学校周边 500 米做缓冲区分析
+  # 目标词 schools 会在候选 [schools_a, schools_b, rivers] 中通过子串匹配命中 schools_a
+```
+
+### 7.6 external_driven：外部 agent 主导式评测（角色反转）
+
+与 7.1~7.5 的"本地 agent 指挥外部 agent"相反，`external_driven` 让**外部 HTTP agent 成为被测对象与主导者**：它拿到 `user_task` 自主执行，缺必要信息（数据集名/缓冲距离/输出格式）时**主动反问**；平台侧内部 LLM 扮演**模拟用户+引导**，从 `actor.goal` 派生 persona 回答反问。
+
+```yaml
+runtime:
+  executor: external_driven      # 新 executor
+  agent_model: external-agent     # 占位：外部 agent 是黑盒 HTTP，不需要本地 agent 模型
+  actor_model: deepseek-v4-flash  # 内部 LLM 模拟用户（models.yaml 别名）；rule-based-*/空 → 规则降级回答
+  judge_model: deepseek-v4-flash  # 必须显式配真实 judge 模型，否则 JudgeEngine 跟随 agent_model 而误降级
+  max_turns: 6                    # 硬兜底：平台→外部 agent 的消息总数上限（含 persona 回答/引导）
+agent:
+  type: http
+  endpoint: http://<host>:8490/agentx/workflowstudio/api/v1/run/<flow_id>
+  stream_response: true
+  body: { input_type: chat, output_type: chat }
+actor:
+  enabled: true
+  profile: normal_user
+  goal: 使用 schools 数据对学校周边 500 米做缓冲区分析，输出 GeoJSON   # 模拟用户的目标/已知信息，LLM persona 来源
+user_task: 对学校周边做缓冲区分析，把结果给我   # 刻意含糊，考验外部 agent 是否反问
+judge:
+  enabled: true
+  penalize_no_ask_back: true      # 外部 agent 缺必要信息不反问、自行猜测执行 → 连续扣分（即使结果对）
+```
+
+**行为**：
+- 会话内多轮在 executor 内部闭环：外部回复命中 `complete`（askback 规则）或 `runtime.max_turns` 耗尽 → 终止；命中 `ask`（反问）→ 内部 LLM 模拟用户回答；`continue`（进展）→ 内部 LLM 给一句引导。
+- `need_interaction` 恒 `False`，runner 的 actor 循环不触发；每轮交互写入 `external_interactions`（现随 `TestResult.final_output` 输出，报告/前端可见）。
+- **`max_turns` 语义**：对 `external_driven`，它是平台→外部 agent 的**消息总数**（含 persona 回答/引导），不是 runner 循环轮数（runner 只走 1 轮）。`actor.max_turns` 在本 executor 内**不生效**（那是 runner actor 循环的预算）。
+
+**评测维度（`judge.penalize_no_ask_back`，默认 false 零回归）**：外部 agent 缺必要信息不反问自行猜测执行，即使最终结果对也扣分。LLM judge 主判（喂 `external_interactions` + rubric 追加反问维度），LLM 不可用时规则镜像兜底（`judge_runtime` 检查所有外部回复均非反问 → `-0.2`）。判定与 executor 分类共用 `geoskillbench/runtime/askback.py`，单一事实源不漂移。
+
+**前置条件**：外部 agent 需支持 `session_id` 回传维持多轮上下文（HttpAgentExecutor 已处理），否则一轮即回、靠 `max_turns` 收尾；mock 反问见 `examples/agent_external/agent_server.py` 的 `build_askback_reply`。

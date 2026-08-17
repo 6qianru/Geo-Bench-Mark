@@ -32,9 +32,9 @@ class HeuristicSessionState:
 
 
 class HeuristicSessionExecutor(Executor):
-    executor_type = "langgraph"
+    executor_type = "skill"
 
-    def __init__(self, adapter: MCPToolAdapter, executor_type: str = "langgraph", compatibility_note: str | None = None) -> None:
+    def __init__(self, adapter: MCPToolAdapter, executor_type: str = "skill", compatibility_note: str | None = None) -> None:
         self.adapter = adapter
         self.executor_type = executor_type
         self.compatibility_note = compatibility_note

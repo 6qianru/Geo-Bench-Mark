@@ -432,3 +432,193 @@ details.result-section summary {
     align-items: start;
   }
 }
+
+/* ---- 新建 Scenario 表单 ---- */
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.panel-head h2 {
+  margin: 0;
+}
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--accent-strong);
+}
+
+.btn-outline:hover {
+  background: #eef0eb;
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: #fbeae9;
+}
+
+.scenario-form {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  background: #fffdf8;
+}
+
+.form-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.form-head h3 {
+  margin: 0;
+}
+
+.form-group {
+  border-top: 1px dashed var(--line);
+  padding: 14px 0 4px;
+  margin-top: 6px;
+}
+
+.form-group h4 {
+  margin: 0 0 12px;
+  color: var(--accent-strong);
+  font-size: 14px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) 1fr;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.form-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.required-star {
+  color: var(--danger);
+}
+
+.field-help {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.form-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fffefb;
+  color: var(--text);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+}
+
+textarea.form-input {
+  resize: vertical;
+}
+
+/* 默认值态：灰底灰字，用户输入后覆盖为白底黑字 */
+.form-input.is-default {
+  color: var(--muted);
+  background: #f2efe8;
+}
+
+.switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.switch-text {
+  font-size: 13px;
+}
+
+.fixture-editor {
+  margin: 4px 0 12px;
+}
+
+.fixture-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 12px;
+  font-size: 13px;
+}
+
+.fixture-table th,
+.fixture-table td {
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.fixture-table .form-input {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.fixture-remove {
+  white-space: nowrap;
+  text-align: center;
+}
+
+.fixture-remove button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.overwrite-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin: 12px 0;
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  background: #fdf3f2;
+}
+
+.overwrite-bar code {
+  font-weight: 700;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}

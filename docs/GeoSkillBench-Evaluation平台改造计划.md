@@ -19,7 +19,7 @@
 ### 1.1 技术栈
 
 - 后端：FastAPI（`geoskillbench/api/app.py`），执行引擎 `geoskillbench/runner.py`
-- 智能体 runtime：默认走 LangGraph（`geoskillbench/executors/langgraph_executor.py`），用 `create_react_agent` 现场搭一个 ReAct 循环，LLM 走 OpenAI-compatible 端点（`geoskillbench/runtime/llm.py`），配置在根目录 `models.yaml`
+- 智能体 runtime：默认走 LangGraph（`geoskillbench/executors/skill_executor.py`），用 `create_react_agent` 现场搭一个 ReAct 循环，LLM 走 OpenAI-compatible 端点（`geoskillbench/runtime/llm.py`），配置在根目录 `models.yaml`
 - Runtime 通过 `executors/factory.py` 按名字生产，目前注册了 `langgraph`（真实可用）和 `nanobot`（占位，未装 `nanobot` 包时 fallback 到纯规则的 `HeuristicSessionExecutor`，无 LLM 参与）
 - 前端：React + Vite SPA（`frontend/src/App.jsx`），场景选择、executor 选择、Validate/List Tools/Create Task、SSE 实时事件、报告查看
 

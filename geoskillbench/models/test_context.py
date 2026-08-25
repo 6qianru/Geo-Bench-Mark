@@ -20,6 +20,7 @@ class SkillContext(BaseModel):
     references: list[dict[str, Any]] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     lazy_load_references: bool = False
+    recommended_mcp_tools: list[str] = Field(default_factory=list)  # skill 推荐工具（executor 用它过滤暴露给 agent 的工具）
 
 
 class DatasetContext(BaseModel):
@@ -46,4 +47,6 @@ class TestContext(BaseModel):
     scenario_name: str
     skill: SkillContext | None = None
     datasets: dict[str, DatasetContext] = Field(default_factory=dict)
+    # 参考数据集（data.reference）：仅断言引擎比对时读取，不暴露给被测 agent（不进提示词/工具解析）
+    reference_datasets: dict[str, DatasetContext] = Field(default_factory=dict)
     mcp_tools: dict[str, MCPToolContext] = Field(default_factory=dict)

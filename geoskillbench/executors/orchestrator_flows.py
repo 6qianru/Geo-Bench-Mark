@@ -1,6 +1,6 @@
 """orchestrator 任务流注册表与内置流程。
 
-设计背景（见 docs/Agent接入契约.md §7.4 与迭代复盘 3.1）：
+设计背景（见 docs/design/01-Agent接入契约.md §7.4 与迭代复盘 3.1）：
 - orchestrator 默认用 react（langgraph prebuilt ReAct），scenario 可经 `agent.flow` 切换。
 - `scripted`：内置固定节点 StateGraph，每轮 = 生成一条指令 → 发给外部 agent → 判定是否完成。
   终止判定 = 规则硬判（max_turns/超限）+ LLM 判完成，结构固定以收敛自由式 ReAct 的 harness 方差。

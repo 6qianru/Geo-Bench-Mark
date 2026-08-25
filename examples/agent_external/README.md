@@ -1,7 +1,7 @@
 # agent_test mock 示例
 
 离线复现"外部智能体黑盒评测"（`type: agent_test`）的参考示例，对应
-`docs/Agent接入契约.md` 对接对象（SuperMap Workflow Studio / Agentx Server）。
+`docs/design/01-Agent接入契约.md` 对接对象（SuperMap Workflow Studio / Agentx Server）。
 
 > 本目录为**示例**，不在 `scenarios/` 下，不会被平台扫描，不影响正常运行。
 

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import ScenarioForm from "./ScenarioForm";
+import ScenarioManager from "./ScenarioManager";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+// VITE_API_BASE 为空 → 相对路径，生产走 nginx 同源反代 /api；本地 dev 由 vite server.proxy 转发到后端
+const API_BASE = import.meta.env.VITE_API_BASE || ""; // 要指定独立后端时传 VITE_API_BASE=http://host:8000
 
 async function fetchJson(path, options) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -13,6 +15,26 @@ async function fetchJson(path, options) {
     throw new Error(text || `Request failed: ${response.status}`);
   }
   return response.json();
+}
+
+const SCENARIOS_PER_PAGE = 7;
+const HISTORY_PER_PAGE = 10;
+
+function Pager({ page, totalPages, onPageChange }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="pager">
+      <button className="pager-btn" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+        ‹ 上一页
+      </button>
+      <span className="pager-info">
+        第 {page} / {totalPages} 页
+      </span>
+      <button className="pager-btn" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+        下一页 ›
+      </button>
+    </div>
+  );
 }
 
 function ResultDetail({ result }) {
@@ -200,11 +222,14 @@ export default function App() {
   const [historyDbError, setHistoryDbError] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [showManage, setShowManage] = useState(false);
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [validation, setValidation] = useState(null);
   const [tools, setTools] = useState([]);
   const [currentTask, setCurrentTask] = useState(null);
   const [runResult, setRunResult] = useState(null);
+  const [scenarioPage, setScenarioPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const eventSourceRef = useRef(null);
@@ -359,7 +384,6 @@ export default function App() {
     source.addEventListener("executor_session", handleEvent);
     source.addEventListener("stage", handleEvent);
     source.addEventListener("executor_step", handleEvent);
-    source.addEventListener("actor_reply", handleEvent);
     source.addEventListener("agent_result", handleEvent);
     source.addEventListener("assertions", handleEvent);
     source.addEventListener("judge", handleEvent);
@@ -398,6 +422,25 @@ export default function App() {
 
   const currentScenario = scenarios.find((scenario) => scenario.path === selectedPath);
   const stageResults = currentTask?.stage_results || {};
+  // 分页：safePage 防止列表变化后当前页越界（slice 用 safePage，Pager 展示 safePage）
+  const scenarioTotalPages = Math.max(1, Math.ceil(scenarios.length / SCENARIOS_PER_PAGE));
+  const scenarioSafePage = Math.min(scenarioPage, scenarioTotalPages);
+  const scenarioPageItems = scenarios.slice(
+    (scenarioSafePage - 1) * SCENARIOS_PER_PAGE,
+    scenarioSafePage * SCENARIOS_PER_PAGE,
+  );
+  const historyTotalPages = Math.max(1, Math.ceil(runHistory.length / HISTORY_PER_PAGE));
+  const historySafePage = Math.min(historyPage, historyTotalPages);
+  const historyPageItems = runHistory.slice(
+    (historySafePage - 1) * HISTORY_PER_PAGE,
+    historySafePage * HISTORY_PER_PAGE,
+  );
+  // agent_test（评测外部 agent 模式）不做数据准备/MCP 连接/技能装载，隐藏这三个与 agent 无关的阶段
+  const isAgentMode = currentScenario?.type === "agent_test";
+  const AGENT_HIDDEN_STAGES = ["PREPARE_DATA", "CONNECT_MCP", "LOAD_SKILL"];
+  const visibleStages = Object.entries(stageResults).filter(
+    ([stage]) => !(isAgentMode && AGENT_HIDDEN_STAGES.includes(stage)),
+  );
 
   return (
     <div className="app-shell">
@@ -420,10 +463,28 @@ export default function App() {
         <section className="panel">
           <div className="panel-head">
             <h2>Scenario</h2>
-            <button className="btn-outline" onClick={() => setShowForm(true)}>
-              新建 Scenario
-            </button>
+            <div className="panel-head-actions">
+              <button
+                className="btn-outline"
+                onClick={() => {
+                  setShowForm(false);
+                  setShowManage(true);
+                }}
+              >
+                管理
+              </button>
+              <button
+                className="btn-outline"
+                onClick={() => {
+                  setShowManage(false);
+                  setShowForm(true);
+                }}
+              >
+                新建 Scenario
+              </button>
+            </div>
           </div>
+          {showManage && <ScenarioManager scenarios={scenarios} onClose={() => setShowManage(false)} onSaved={loadScenariosOnly} />}
           {showForm && <ScenarioForm onClose={() => setShowForm(false)} onSaved={loadScenariosOnly} />}
           <label className="field">
             <span>Select scenario</span>
@@ -465,13 +526,14 @@ export default function App() {
             <div>
               <h3>Available scenarios</h3>
               <ul className="list">
-                {scenarios.map((scenario) => (
+                {scenarioPageItems.map((scenario) => (
                   <li key={scenario.path}>
                     <strong>{scenario.name}</strong>
                     <span>{scenario.path}</span>
                   </li>
                 ))}
               </ul>
+              <Pager page={scenarioSafePage} totalPages={scenarioTotalPages} onPageChange={setScenarioPage} />
             </div>
             <div>
               <h3>Available skills</h3>
@@ -497,8 +559,8 @@ export default function App() {
             <article>
               <h3>Stage state</h3>
               <ul className="list compact">
-                {Object.entries(stageResults).length ? (
-                  Object.entries(stageResults).map(([stage, status]) => (
+                {visibleStages.length ? (
+                  visibleStages.map(([stage, status]) => (
                     <li key={stage} className={`stage-${status.toLowerCase()}`}>
                       <strong>
                         {stage}
@@ -544,18 +606,21 @@ export default function App() {
           ) : runHistory.length === 0 ? (
             <p className="muted">No runs recorded yet.</p>
           ) : (
-            <ul className="list">
-              {runHistory.map((run) => (
-                <li key={run.run_id} onClick={() => loadRunDetail(run.run_id)} style={{ cursor: "pointer" }}>
-                  <strong>{run.scenario_name || run.scenario_id}</strong>
-                  <span>
-                    {run.run_id.slice(0, 8)} · <span className={run.status === "passed" ? "pill ok" : "pill bad"}>{run.status}</span> ·{" "}
-                    {run.executor || "—"} · {run.created_at?.slice(0, 19)?.replace("T", " ")}
-                  </span>
-                  <span className="muted">点击查看该次运行报告</span>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="list">
+                {historyPageItems.map((run) => (
+                  <li key={run.run_id} onClick={() => loadRunDetail(run.run_id)} style={{ cursor: "pointer" }}>
+                    <strong>{run.scenario_name || run.scenario_id}</strong>
+                    <span>
+                      {run.run_id.slice(0, 8)} · <span className={run.status === "passed" ? "pill ok" : "pill bad"}>{run.status}</span> ·{" "}
+                      {run.executor || "—"} · {run.created_at?.slice(0, 19)?.replace("T", " ")}
+                    </span>
+                    <span className="muted">点击查看该次运行报告</span>
+                  </li>
+                ))}
+              </ul>
+              <Pager page={historySafePage} totalPages={historyTotalPages} onPageChange={setHistoryPage} />
+            </>
           )}
         </section>
 

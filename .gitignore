@@ -26,3 +26,6 @@ reports/
 
 # 编辑器个人配置
 .vscode/
+
+# 编辑器个人配置
+.idea/

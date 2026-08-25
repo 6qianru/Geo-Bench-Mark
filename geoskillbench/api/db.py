@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import String, Text, create_engine, select
+from sqlalchemy import String, Text, create_engine, delete, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 load_dotenv()
@@ -85,6 +85,7 @@ def save_report(report: dict) -> None:
             )
         )
         session.commit()
+    prune_reports()  # 只保留最近 N 条历史，旧记录自动销毁
 
 
 def list_reports(scenario_id: str | None = None) -> list[dict]:
@@ -119,3 +120,30 @@ def reports_db_path() -> str:
     if url.startswith("sqlite"):
         return str(Path(url.removeprefix("sqlite:///")).resolve())
     return url
+
+
+def prune_reports(keep: int | None = None) -> int:
+    """只保留最近 keep 条历史评测，删除更早记录（物理删除，不可恢复）。
+
+    阈值优先级：keep 参数 > GEO_BENCH_HISTORY_KEEP 环境变量 > 默认 100。
+    返回删除的行数。DB 故障不在此吞异常——save_report 调用方的
+    try/except 与 lifespan 启动清理各自的 catch 负责兜底。
+    """
+    limit = keep if keep is not None else _history_keep()
+    with _session() as session:
+        statement = delete(RunReport).where(
+            RunReport.run_id.not_in(
+                select(RunReport.run_id).order_by(RunReport.created_at.desc()).limit(limit)
+            )
+        )
+        result = session.execute(statement)
+        session.commit()
+        return result.rowcount or 0
+
+
+def _history_keep() -> int:
+    raw = os.environ.get("GEO_BENCH_HISTORY_KEEP", "100").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 100

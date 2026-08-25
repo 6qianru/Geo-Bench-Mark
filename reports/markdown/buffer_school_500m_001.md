@@ -2,7 +2,7 @@
 
 - Scenario ID: `buffer_school_500m_001`
 - Status: `passed`
-- Duration: `13 ms`
+- Duration: `5709 ms`
 - Judge Score: `1.0` (mode: `rule-skill`)
 
 ## Stage Results
@@ -72,8 +72,10 @@
 ```json
 {
   "dataset": "schools_metric",
-  "handle": "dataset://test/buffer_school_500m_001/schools_metric",
-  "crs": "EPSG:3857"
+  "handle": "dataset://test/buffer_school_500m_001/schools",
+  "path": "reports\\outputs\\f1e1003228234b318fe08b534a7c0494\\schools_metric.geojson",
+  "crs": "EPSG:3857",
+  "feature_count": 2
 }
 ```
 ### 3. `create_buffer` (`success`)
@@ -91,7 +93,9 @@
 {
   "dataset": "buffer_result",
   "handle": "dataset://generated/buffer_result",
+  "path": "reports\\outputs\\f1e1003228234b318fe08b534a7c0494\\buffer_result.geojson",
   "geometry_type": "Polygon",
+  "feature_count": 2,
   "crs": "EPSG:3857"
 }
 ```

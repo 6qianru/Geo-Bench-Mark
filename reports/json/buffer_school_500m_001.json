@@ -1,9 +1,9 @@
 {
-  "run_id": "fd3516a5ba8f4c32a893ccea29cc5036",
+  "run_id": "f1e1003228234b318fe08b534a7c0494",
   "scenario_id": "buffer_school_500m_001",
   "scenario_name": "学校周边 500 米缓冲区分析",
   "status": "passed",
-  "duration_ms": 13,
+  "duration_ms": 5709,
   "stage_results": {
     "LOAD_SCENARIO": "PASSED",
     "PREPARE_DATA": "PASSED",
@@ -52,7 +52,7 @@
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-13T07:12:04.468217+00:00",
+      "recorded_at": "2026-08-21T02:37:13.383198+00:00",
       "order": 1
     },
     {
@@ -64,14 +64,16 @@
       },
       "result": {
         "dataset": "schools_metric",
-        "handle": "dataset://test/buffer_school_500m_001/schools_metric",
-        "crs": "EPSG:3857"
+        "handle": "dataset://test/buffer_school_500m_001/schools",
+        "path": "reports\\outputs\\f1e1003228234b318fe08b534a7c0494\\schools_metric.geojson",
+        "crs": "EPSG:3857",
+        "feature_count": 2
       },
       "status": "success",
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-13T07:12:04.468247+00:00",
+      "recorded_at": "2026-08-21T02:37:13.383231+00:00",
       "order": 2
     },
     {
@@ -85,14 +87,16 @@
       "result": {
         "dataset": "buffer_result",
         "handle": "dataset://generated/buffer_result",
+        "path": "reports\\outputs\\f1e1003228234b318fe08b534a7c0494\\buffer_result.geojson",
         "geometry_type": "Polygon",
+        "feature_count": 2,
         "crs": "EPSG:3857"
       },
       "status": "success",
       "latency_ms": null,
       "error_message": null,
       "tool_type": "mcp",
-      "recorded_at": "2026-08-13T07:12:04.468270+00:00",
+      "recorded_at": "2026-08-21T02:37:13.383238+00:00",
       "order": 3
     }
   ],
@@ -181,7 +185,7 @@
   ],
   "final_output": {
     "final_response": "[FINAL]\n已完成 schools 数据的 500 米缓冲区分析。 结果数据句柄为 dataset://generated/buffer_result，输出 CRS 为 EPSG:3857。",
-    "executor": "langgraph",
+    "executor": "skill",
     "runtime_mode": "compatibility",
     "runtime_metadata": {
       "runtime_mode": "compatibility",
@@ -193,11 +197,14 @@
       "result_dataset": {
         "dataset": "buffer_result",
         "handle": "dataset://generated/buffer_result",
+        "path": "reports\\outputs\\f1e1003228234b318fe08b534a7c0494\\buffer_result.geojson",
         "geometry_type": "Polygon",
+        "feature_count": 2,
         "crs": "EPSG:3857"
       },
       "executor_note": "Model 'rule-based-agent' is a heuristic compatibility model, so the executor is using the rule-based fallback path."
-    }
+    },
+    "external_interactions": []
   },
   "loaded_skill_references": [],
   "errors": []

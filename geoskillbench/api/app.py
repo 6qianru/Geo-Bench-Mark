@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 import yaml
 
 from geoskillbench.api.task_manager import TaskManager
@@ -39,7 +40,28 @@ class ScenarioCreateRequest(BaseModel):
     overwrite: bool = False
 
 
-app = FastAPI(title="GeoSkillBench API", version="0.2.0")
+class ScenarioContentRequest(BaseModel):
+    content: str  # 场景 YAML 原文（编辑保存用，后端校验后原样写回）
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # 启动时清理历史积压：只保留最近 GEO_BENCH_HISTORY_KEEP 条 run_history（默认 100）。
+    # DB 不可用时静默跳过——历史清理是增强能力，不阻塞服务启动。
+    try:
+        from geoskillbench.api import db
+
+        pruned = db.prune_reports()
+        if pruned:
+            import logging
+
+            logging.getLogger(__name__).info("pruned %d stale run history row(s)", pruned)
+    except Exception:
+        pass
+    yield
+
+
+app = FastAPI(title="GeoSkillBench API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,6 +70,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 task_manager = TaskManager()
+
+
 
 
 def _runner() -> TestRunner:
@@ -65,6 +89,7 @@ def _scenario_listing() -> list[dict]:
                     "id": scenario.id,
                     "name": scenario.name,
                     "version": scenario.version,
+                    "type": scenario.type,  # agent_test / agent_skill_test，前端据此决定显示哪些 stage
                     "path": str(path.relative_to(ROOT_DIR)),
                     "description": scenario.description,
                     "skill_id": scenario.target.skill_id,
@@ -77,6 +102,7 @@ def _scenario_listing() -> list[dict]:
                     "id": path.stem,
                     "name": path.name,
                     "version": "unknown",
+                    "type": "unknown",
                     "path": str(path.relative_to(ROOT_DIR)),
                     "description": f"Failed to load scenario: {exc}",
                     "skill_id": "unknown",
@@ -179,6 +205,12 @@ def list_scenarios() -> list[dict]:
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
+def _validate_scenario_id(scenario_id: str) -> None:
+    """id 即文件名，只允许安全字符，防路径穿越。"""
+    if not _SAFE_ID_RE.fullmatch(scenario_id):
+        raise HTTPException(400, "场景 ID 仅允许字母、数字、下划线、中划线")
+
+
 @app.get("/api/scenarios/schema")
 def scenario_schema() -> list[dict]:
     """返回前端"新建 Scenario"表单的定义（字段/必填/默认值/分组/模式联动）。"""
@@ -204,7 +236,22 @@ def create_scenario(request: ScenarioCreateRequest) -> dict:
         raise HTTPException(409, f"场景 {scenario_id} 已存在，请确认是否覆盖？")
 
     data.setdefault("target", {})
-    scenario = Scenario.model_validate(data)
+    # 剥离与评测模式不符的残留块：agent_test 不带 skill、agent_skill_test 不带 agent。
+    # 正常提交不受影响（对应模式本来就是要带的那块）；这里是兜底，防止前端残留字段
+    # 拼出残缺对象导致校验失败。
+    if data.get("type") == "agent_test":
+        data.pop("skill", None)
+        if not data.get("agent"):
+            data.pop("agent", None)
+    else:
+        data.pop("agent", None)
+        if not data.get("skill"):
+            data.pop("skill", None)
+    try:
+        scenario = Scenario.model_validate(data)
+    except ValidationError as exc:
+        # 参数校验失败返回可读的 400，而不是笼统的 500
+        raise HTTPException(400, f"场景参数不合法：{exc.errors()}")
     payload = scenario.model_dump(exclude_none=True)
     # 清空结构：前端常用字段表单不暴露的块（断言/预期行为/MCP/数据源），空时不写入
     for key in ("expected_behavior", "assertions"):
@@ -212,11 +259,63 @@ def create_scenario(request: ScenarioCreateRequest) -> dict:
             payload.pop(key, None)
     if not payload.get("mcp", {}).get("servers"):
         payload.pop("mcp", None)
-    if not payload.get("data", {}).get("fixtures"):
+    elif not payload.get("mcp", {}).get("tools", {}).get("required") and not payload.get("mcp", {}).get("tools", {}).get("optional"):
+        # mcp 只有 servers、tools 全空（表单只写 servers，工具由 server 自动发现）→ 剥离空 tools 块
+        payload["mcp"].pop("tools", None)
+    # data 块（fixtures + reference）都为空才清掉；只配参考（fixtures 空、reference 有值）时保留
+    if not payload.get("data"):
         payload.pop("data", None)
 
     target.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return {"id": scenario.id, "path": f"scenarios/{target.name}"}
+
+
+@app.get("/api/scenarios/{scenario_id}")
+def get_scenario(scenario_id: str) -> dict:
+    """返回场景 YAML 原文（前端"管理 → 编辑"回显用，原文透传保留注释）。"""
+    _validate_scenario_id(scenario_id)
+    target = SCENARIOS_DIR / f"{scenario_id}.yml"
+    if not target.exists():
+        raise HTTPException(404, f"场景不存在：{scenario_id}")
+    return {
+        "id": scenario_id,
+        "path": f"scenarios/{target.name}",
+        "content": target.read_text(encoding="utf-8"),
+    }
+
+
+@app.put("/api/scenarios/{scenario_id}")
+def update_scenario(scenario_id: str, request: ScenarioContentRequest) -> dict:
+    """更新场景：校验 yaml 后原样写回（保留注释/格式）。id 即文件名，不可修改。"""
+    _validate_scenario_id(scenario_id)
+    target = SCENARIOS_DIR / f"{scenario_id}.yml"
+    if not target.exists():
+        raise HTTPException(404, f"场景不存在：{scenario_id}")
+    content = request.content.strip()
+    if not content:
+        raise HTTPException(400, "场景内容为空")
+    try:
+        data = yaml.safe_load(content)
+        scenario = Scenario.model_validate(data)
+    except yaml.YAMLError as exc:
+        raise HTTPException(400, f"YAML 解析失败：{exc}")
+    except ValidationError as exc:
+        raise HTTPException(400, f"场景参数不合法：{exc.errors()}")
+    if scenario.id != scenario_id:
+        raise HTTPException(400, f"场景 id 不能修改（文件名即 id）：{scenario.id} ≠ {scenario_id}")
+    target.write_text(content + ("\n" if not content.endswith("\n") else ""), encoding="utf-8")
+    return {"id": scenario.id, "path": f"scenarios/{target.name}"}
+
+
+@app.delete("/api/scenarios/{scenario_id}")
+def delete_scenario(scenario_id: str) -> dict:
+    """删除场景配置文件。历史报告（reports/ 与 DB run_history）按 scenario_id 独立留存，不受影响。"""
+    _validate_scenario_id(scenario_id)
+    target = SCENARIOS_DIR / f"{scenario_id}.yml"
+    if not target.exists():
+        raise HTTPException(404, f"场景不存在：{scenario_id}")
+    target.unlink()
+    return {"deleted": scenario_id}
 
 
 @app.get("/api/skills")
@@ -284,7 +383,7 @@ def list_executors() -> list[dict]:
             "available": True,
             "default": False,
             "runtime_mode": "compatibility",
-            "issue": "外部 HTTP 智能体黑盒接入（见 docs/Agent接入契约.md）",
+            "issue": "外部 HTTP 智能体黑盒接入（见 docs/design/01-Agent接入契约.md）",
         },
     ]
 

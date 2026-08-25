@@ -1,0 +1,20 @@
+# GeoSkillBench 前端镜像（多阶段）
+# 阶段1：Node 构建 Vite 产物（VITE_API_BASE="" → 相对路径，生产 nginx 同源反代 /api）
+# 阶段2：nginx 静态服务 + /api 反向代理到 backend:8000（同 compose 网络，消灭 CORS）
+FROM node:20-alpine AS build
+WORKDIR /app/frontend
+
+# 依赖层：npm 用 registry 镜像加速，复用缓存层
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --registry=https://registry.npmmirror.com
+
+COPY frontend/ .
+# 相对路径模式：不注入 VITE_API_BASE，构建后 API_BASE=""，浏览器请求同源 /api
+RUN npm run build
+
+FROM nginx:alpine
+# 前端静态产物 + 反代配置
+COPY --from=build /app/frontend/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80

@@ -1,4 +1,4 @@
-"""示例：模拟 SuperMap Workflow Studio Run Flow API（docs/Agent接入契约.md 对接对象）。
+"""示例：模拟 SuperMap Workflow Studio Run Flow API（docs/design/01-Agent接入契约.md 对接对象）。
 
 这是"可离线复现真实联调"的 mock server：它模拟的是 2026-08 实测到的
 真实 Workflow Studio 格式，而不是早期推断的标准 SSE 格式：
@@ -19,11 +19,27 @@
 端口默认 8901，对应 scenarios 示例里 endpoint 写死的 127.0.0.1:8901。
 """
 
+import argparse
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8901
+
+def _parse_args() -> tuple[str, int]:
+    """解析 --host/--port；默认 127.0.0.1:8901（与 in-repo 场景 endpoint 一致，零回归）。
+    Docker 容器里用 --host 0.0.0.0 以跨容器可达（见 Dockerfile.mock）。
+    兼容旧式位置参数：`python agent_server.py 8901` → host 默认 127.0.0.1, port=8901。
+    """
+    parser = argparse.ArgumentParser(description="mock Workflow Studio Run Flow server")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("port_pos", nargs="?", type=int)
+    args = parser.parse_args()
+    port = args.port if args.port is not None else (args.port_pos or 8901)
+    return args.host, port
+
+
+HOST, PORT = _parse_args()
 
 # 工具调用的入参/出参（模拟"缓冲分析"工具一次完整的调用日志）
 TOOL_START = {
@@ -156,6 +172,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"mock agent server listening on 127.0.0.1:{PORT}")
+    server = HTTPServer((HOST, PORT), Handler)
+    print(f"mock agent server listening on {HOST}:{PORT}")
     server.serve_forever()

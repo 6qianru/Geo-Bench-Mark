@@ -12,10 +12,10 @@ from geoskillbench.loader.scenario_loader import ScenarioLoader
 from geoskillbench.loader.skill_loader import SkillLoader
 from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
 from geoskillbench.models.result import ExecutorSessionRequest, TestResult
+from geoskillbench.models.scenario import AgentConfig
 from geoskillbench.models.test_context import MCPToolContext, SkillContext, TestContext
 from geoskillbench.recorder.execution_recorder import ExecutionRecorder
 from geoskillbench.reports.report_generator import ReportGenerator
-from geoskillbench.runtime.actor_runtime import ActorRuntime
 from geoskillbench.runtime.judge_runtime import JudgeEngine
 
 
@@ -32,13 +32,28 @@ STAGES = [
 ]
 
 
+def _user_config(agent: AgentConfig | None) -> dict[str, Any]:
+    """从 agent 配置提取模拟用户设定（扁平 dict），executor 统一从 role_model_config['user'] 读。
+
+    skill 场景（agent=None）也能拿到默认值，保证 skill 反问闭环可用。
+    """
+    agent_dict = agent.model_dump() if agent is not None else {}
+    return {
+        "user_enabled": agent_dict.get("user_enabled", True),
+        "user_profile": agent_dict.get("user_profile", "normal_user"),
+        "user_goal": agent_dict.get("user_goal", ""),
+        "user_max_turns": agent_dict.get("user_max_turns", 5),
+        "user_model": agent_dict.get("user_model", "rule-based-user"),
+        "ask_user": agent_dict.get("ask_user", False),
+    }
+
+
 class TestRunner:
     def __init__(self) -> None:
         self.scenario_loader = ScenarioLoader()
         self.fixture_manager = FixtureManager()
         self.skill_loader = SkillLoader()
         self.adapter = MCPToolAdapter()
-        self.actor_runtime = ActorRuntime()
         self.assertion_engine = AssertionEngine()
         self.judge_engine = JudgeEngine()
         self.report_generator = ReportGenerator()
@@ -75,6 +90,11 @@ class TestRunner:
         run_id: str | None = None,
     ) -> TestResult:
         run_id = run_id or uuid.uuid4().hex
+        base_output = Path(output_dir) if output_dir else Path("reports")
+        # mock 工具真实几何产出的落盘目录（run_id 隔离，报告产物持久化）
+        self.adapter.set_output_dir(base_output / "outputs" / run_id)
+        # 数据库拉取临时文件目录（cleanup 时删除，不进报告产物）
+        self.fixture_manager.set_work_dir(base_output / "outputs" / run_id / "_db_pull")
         stage_results = {stage: "PENDING" for stage in STAGES}
         start_time = time.perf_counter()
         recorder = ExecutionRecorder(scenario_id=Path(scenario_path).stem)
@@ -95,14 +115,18 @@ class TestRunner:
 
             stage_results["PREPARE_DATA"] = "RUNNING"
             emit("stage", stage="PREPARE_DATA", status="RUNNING", stage_results=dict(stage_results))
-            datasets = self.fixture_manager.prepare(scenario)
+            datasets, reference_datasets = self.fixture_manager.prepare(scenario)
             stage_results["PREPARE_DATA"] = "PASSED"
             emit("stage", stage="PREPARE_DATA", status="PASSED", stage_results=dict(stage_results))
 
             stage_results["CONNECT_MCP"] = "RUNNING"
             emit("stage", stage="CONNECT_MCP", status="RUNNING", stage_results=dict(stage_results))
-            self.adapter.connect_servers(scenario.mcp.servers)
+            # 顺序：先注册数据集再连 server。mock server 启动时通过 env 注入数据映射，
+            # register_datasets 必须先于 connect_servers，否则 mock 进程拿不到 fixtures。
             self.adapter.register_datasets(datasets)
+            self.adapter.connect_servers(scenario.mcp.servers)
+            # 只注册输入数据（fixtures）：参考数据（data.reference）不注册进 adapter，
+            # agent 的工具解析不到它，避免标准答案被当作可用数据集操作。
             tools = self.adapter.get_agent_tools(scenario.mcp.tools.required, scenario.mcp.tools.optional)
             self.adapter.validate_required_tools(scenario.mcp.tools.required)
             stage_results["CONNECT_MCP"] = "PASSED"
@@ -119,6 +143,18 @@ class TestRunner:
                 recorder.record_skill_load(skill.id)
                 stage_results["LOAD_SKILL"] = "PASSED"
                 emit("stage", stage="LOAD_SKILL", status="PASSED", stage_results=dict(stage_results), skill_id=skill.id)
+
+                # fail-fast：skill 声明所需工具必须被 server 提供，否则 agent 不启动、直接 fail。
+                # 工具已通过 CONNECT_MCP 阶段 tools/list 自动发现进 adapter；缺哪工具直接报出。
+                skill_required = getattr(skill, "recommended_mcp_tools", None) or []
+                if skill_required:
+                    missing = self.adapter.missing_tools(skill_required)
+                    if missing:
+                        raise ValueError(
+                            "Skill 所需工具在 MCP server 缺失，无法评测："
+                            f"缺少 {', '.join(missing)}（skill 声明 {skill_required}，server 仅提供 "
+                            f"{[t.name for t in self.adapter.list_tools()]}）。"
+                        )
 
             test_context = TestContext(
                 scenario_id=scenario.id,
@@ -139,11 +175,13 @@ class TestRunner:
                         references=[reference.model_dump() for reference in skill.references],
                         assumptions=skill.assumptions,
                         lazy_load_references=skill.lazy_load_references,
+                        recommended_mcp_tools=skill.recommended_mcp_tools,
                     )
                     if skill is not None
                     else None
                 ),
                 datasets=datasets,
+                reference_datasets=reference_datasets,
                 mcp_tools={
                     tool.name: MCPToolContext(server=tool.server, available=True, optional=tool.optional)
                     for tool in self.adapter.list_tools()
@@ -166,8 +204,8 @@ class TestRunner:
                 role_model_config={
                     "model": scenario.runtime.agent_model,
                     "executor": runtime_executor,
-                    "actor_model": scenario.runtime.actor_model,  # external_driven 内部 LLM 模拟用户模型
-                    "actor": scenario.actor.model_dump() if scenario.actor else {},  # goal/profile/max_turns
+                    # 反问闭环下沉：模拟用户设定（agent.user_*）扁平注入，executor 统一从这里读
+                    "user": _user_config(scenario.agent),
                 },
                 max_turns=scenario.runtime.max_turns,
                 timeout_seconds=scenario.runtime.timeout_seconds,
@@ -194,7 +232,6 @@ class TestRunner:
             final_response = ""
             run_failed = False
             current_message = scenario.user_task
-            conversation.append({"role": "user", "content": current_message})
             turn_limit = scenario.runtime.max_turns
 
             for turn_index in range(turn_limit):
@@ -202,7 +239,13 @@ class TestRunner:
                 tool_calls.extend(step_result.tool_calls)
                 output_artifacts.update(step_result.artifacts)
                 final_response = step_result.response or final_response
-                conversation.append({"role": "assistant", "content": step_result.response})
+                if step_result.conversation:
+                    # 反问闭环下沉后，executor 内部跑完整多轮并返回完整对话（含模拟用户回答）
+                    conversation = step_result.conversation
+                elif not conversation:
+                    # 老 executor（http_agent/nanobot）不返回对话：自拼一问一答
+                    conversation.append({"role": "user", "content": current_message})
+                    conversation.append({"role": "assistant", "content": step_result.response})
                 emit(
                     "executor_step",
                     stage="RUN_AGENT",
@@ -223,20 +266,8 @@ class TestRunner:
                 if step_result.finished:
                     break
 
-                if step_result.need_interaction and scenario.actor.enabled and turn_index < scenario.actor.max_turns:
-                    actor_reply = self.actor_runtime.reply(scenario, conversation, test_context)
-                    conversation.append({"role": "user", "content": actor_reply})
-                    emit(
-                        "actor_reply",
-                        stage="RUN_AGENT",
-                        status="RUNNING",
-                        stage_results=dict(stage_results),
-                        turn_index=turn_index,
-                        message=actor_reply,
-                    )
-                    current_message = actor_reply
-                    continue
-
+                # 兼容：老 executor 返回 need_interaction 但反问闭环已下沉到 executor 内部，
+                # runner 不再有 actor 循环 → 直接终止（保留 need_interaction 信号给前端展示）
                 break
 
             executor.close_session(session.session_id)
@@ -335,8 +366,8 @@ class TestRunner:
             emit("error", stage=failed_stage, status="FAILED", stage_results=dict(stage_results), message=str(exc))
             stage_results["CLEANUP"] = "RUNNING"
             emit("stage", stage="CLEANUP", status="RUNNING", stage_results=dict(stage_results))
-            if test_context is not None:
-                self.fixture_manager.cleanup(test_context)
+            # 无论 test_context 是否已构造都要清理（PREPARE_DATA 阶段失败也会留下 DB 拉取目录）
+            self.fixture_manager.cleanup(test_context)
             stage_results["CLEANUP"] = "PASSED"
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             if scenario is None:

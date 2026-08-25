@@ -61,6 +61,9 @@ class ExecutorStepResult(BaseModel):
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     artifacts: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
+    # 反问闭环下沉后，executor 内部跑完整多轮对话，返回完整会话记录（[{role, content}, ...]）；
+    # runner 用它整体替换自拼 conversation，保证 report 的完整对话包含模拟用户回答。空则老 executor 兼容。
+    conversation: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AssertionItemResult(BaseModel):

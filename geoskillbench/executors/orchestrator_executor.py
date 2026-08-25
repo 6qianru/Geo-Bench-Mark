@@ -12,12 +12,23 @@ from geoskillbench.executors.orchestrator_flows import FLOW_REGISTRY, available_
 from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
 from geoskillbench.models.result import ExecutorSession, ExecutorSessionRequest, ExecutorStepResult, ToolCallRecord
 from geoskillbench.runtime.llm import build_llm, load_models_config
+from geoskillbench.runtime.user_simulator import UserSimulator
 
 import geoskillbench.executors.example_flows  # noqa: F401  # 注册示例流程(keyword/pipeline)；不需要示例可删这行
 
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _last_ai_message(result_state: dict[str, Any]) -> str:
+    """从 langgraph 结果里取最后一条非空 AI 消息文本。"""
+    from langchain_core.messages import AIMessage  # 惰性导入
+
+    for msg in reversed(result_state.get("messages", [])):
+        if isinstance(msg, AIMessage) and msg.content:
+            return str(msg.content)
+    return ""
 
 
 @dataclass
@@ -32,7 +43,13 @@ class OrchestratorSessionState:
     instruction_count: int = 0
     pending_tool_calls: list[ToolCallRecord] = field(default_factory=list)
     external_interactions: list[dict[str, Any]] = field(default_factory=list)
-    react_messages: list[Any] = field(default_factory=list)  # react 流程跨轮对话累积（追问 actor 后不丢上下文）
+    react_messages: list[Any] = field(default_factory=list)  # react 流程跨轮对话累积（追问用户后不丢上下文）
+    # 反问闭环（下沉）：模拟用户回答 agent 的 [NEED_INTERACTION] 追问
+    user_simulator: UserSimulator | None = None
+    user_enabled: bool = False
+    user_max_turns: int = 0
+    user_turn: int = 0
+    conversation: list[dict[str, Any]] = field(default_factory=list)  # 完整会话（含模拟用户回答），runner 用它生成 report
 
 
 def _build_operator_prompt(request: ExecutorSessionRequest, agent: dict[str, Any]) -> str:
@@ -96,7 +113,7 @@ FLOW_REGISTRY["react"] = _build_react_agent
 class OrchestratorExecutor(Executor):
     """本地 agent（LangGraph）作为操作者，多轮指挥外部 agent 完成目标的 Executor。
 
-    架构（见 docs/GeoSkillBench-迭代1-多轮指挥实现计划.md）：
+    架构（见 docs/plan/迭代1-orchestrator多轮指挥外部agent.md）：
     - 流程可选：agent.flow = react（默认，ReAct）/ scripted（内置固定节点）/ 注册表自定义。
     - 共享原语 send_external_instruction 复用 HttpAgentExecutor 的 session：转发指令、解析 SSE/JSON、
       维持外部多轮上下文；外部 agent 上报的 tool_event 转成 ToolCallRecord 流入 recorder。
@@ -140,6 +157,19 @@ class OrchestratorExecutor(Executor):
         http_executor = HttpAgentExecutor(self.adapter)
         http_session = http_executor.create_session(request)
 
+        # 反问闭环：从 runner 注入的 role_model_config["user"] 构造模拟用户
+        user_cfg = request.role_model_config.get("user") or {}
+        user_enabled = bool(user_cfg.get("user_enabled", True))
+        user_max_turns = int(user_cfg.get("user_max_turns") or 5)
+        user_simulator = None
+        if user_enabled:
+            user_simulator = UserSimulator(
+                goal=str(user_cfg.get("user_goal") or ""),
+                profile=str(user_cfg.get("user_profile") or "normal_user"),
+                model=str(user_cfg.get("user_model") or "rule-based-user"),
+                models_config=self.models_config,
+            )
+
         session_id = uuid4().hex
         state = OrchestratorSessionState(
             request=request,
@@ -149,6 +179,9 @@ class OrchestratorExecutor(Executor):
             max_turns=request.max_turns,
             flow=flow,
             models_config=self.models_config,
+            user_simulator=user_simulator,
+            user_enabled=user_enabled,
+            user_max_turns=user_max_turns,
         )
         state.agent = builder(state)
         self.sessions[session_id] = state
@@ -167,52 +200,68 @@ class OrchestratorExecutor(Executor):
         recursion_limit = state.max_turns * 4 + 6  # 指令数上限 + 收尾余量，作流程循环的第二道安全阀
 
         if state.flow == "react":
-            from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+            from langchain_core.messages import HumanMessage, SystemMessage
 
-            # 跨轮累积：追问 actor 后第二次 invoke 时 agent 仍记得之前的对话与外部交互
-            result_state = state.agent.invoke(
-                {"messages": state.react_messages + [HumanMessage(content=message)]},
-                config={"recursion_limit": recursion_limit},
-            )
-            state.react_messages = [
-                m for m in result_state.get("messages", []) if not isinstance(m, SystemMessage)
-            ]
-            final_ai_content = ""
-            for msg in reversed(result_state.get("messages", [])):
-                if isinstance(msg, AIMessage) and msg.content:
-                    final_ai_content = str(msg.content)
+            # 反问闭环：agent 输出 [NEED_INTERACTION] → UserSimulator 回答 → 追加 react_messages →
+            # 再 invoke（agent 记得之前的对话与外部交互），直到完成或 user_max_turns 耗尽。
+            # ask_user=False / user_enabled=False 时不回答反问，按普通输出结束（存量行为）。
+            if not state.conversation:
+                state.conversation.append({"role": "user", "content": message})
+            ask_user = bool((state.request.agent or {}).get("ask_user"))
+            while True:
+                result_state = state.agent.invoke(
+                    {"messages": state.react_messages + [HumanMessage(content=message)]},
+                    config={"recursion_limit": recursion_limit},
+                )
+                state.react_messages = [
+                    m for m in result_state.get("messages", []) if not isinstance(m, SystemMessage)
+                ]
+                final_ai_content = _last_ai_message(result_state)
+                state.conversation.append({"role": "assistant", "content": final_ai_content})
+                need_interaction = ask_user and final_ai_content.strip().startswith("[NEED_INTERACTION]")
+                if not need_interaction or state.user_turn >= state.user_max_turns or not state.user_enabled:
                     break
-        else:
-            # scripted/自定义：以固定输入键 invoke，从结果 state 取 final_response
-            result_state = state.agent.invoke(
-                {
-                    "goal": message,
-                    "latest_response": "",
-                    "pending_instruction": "",
-                    "summary": "",
-                    "blocker": "",
-                    "done": False,
-                    "final_response": "",
-                },
-                config={"recursion_limit": recursion_limit},
+                reply = state.user_simulator.reply(final_ai_content)
+                state.react_messages.append(HumanMessage(content=reply))
+                state.conversation.append({"role": "user", "content": reply})
+                message = reply
+                state.user_turn += 1
+            tool_calls = list(state.pending_tool_calls)
+            state.pending_tool_calls.clear()
+            return ExecutorStepResult(
+                response=final_ai_content,
+                finished=True,
+                need_interaction=False,
+                tool_calls=tool_calls,
+                conversation=list(state.conversation),
             )
-            final_ai_content = str(result_state.get("final_response") or "")
 
+        # scripted/自定义：以固定输入键 invoke，从结果 state 取 final_response；不识别 [NEED_INTERACTION]
+        result_state = state.agent.invoke(
+            {
+                "goal": message,
+                "latest_response": "",
+                "pending_instruction": "",
+                "summary": "",
+                "blocker": "",
+                "done": False,
+                "final_response": "",
+            },
+            config={"recursion_limit": recursion_limit},
+        )
+        final_ai_content = str(result_state.get("final_response") or "")
         tool_calls = list(state.pending_tool_calls)
         state.pending_tool_calls.clear()
-
-        # 追问协议：仅 react 流程且 ask_user=True 时，agent 输出 [NEED_INTERACTION] → 等用户(actor)回答；
-        # 否则保持 finished=True（现状，含 [FINAL]）。非 react 流程不识别（示例 flow 无此输出）。
-        need_interaction = (
-            state.flow == "react"
-            and bool((state.request.agent or {}).get("ask_user"))
-            and final_ai_content.strip().startswith("[NEED_INTERACTION]")
-        )
+        conversation = list(state.conversation)
+        if not conversation:
+            conversation.append({"role": "user", "content": message})
+        conversation.append({"role": "assistant", "content": final_ai_content})
         return ExecutorStepResult(
             response=final_ai_content,
-            finished=not need_interaction,
-            need_interaction=need_interaction,
+            finished=True,
+            need_interaction=False,
             tool_calls=tool_calls,
+            conversation=conversation,
         )
 
     def close_session(self, session_id: str) -> None:

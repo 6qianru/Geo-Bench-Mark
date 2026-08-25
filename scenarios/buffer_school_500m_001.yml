@@ -11,7 +11,6 @@ target:
 runtime:
   executor: skill          # 历史别名 langgraph 仍兼容
   agent_model: rule-based-agent
-  actor_model: rule-based-actor
   max_turns: 6
   timeout_seconds: 180
   memory_enabled: false
@@ -56,15 +55,17 @@ skill:
   required: true
 user_task: >
   请帮我生成 schools 数据周边 500 米的服务范围。
-actor:
-  enabled: true
-  profile: normal_user
-  max_turns: 5
-  goal: >
+# 模拟用户设定（反问闭环）：被测 skill agent 缺信息反问时，UserSimulator 按 user_goal 回答
+agent:
+  user_enabled: true
+  user_profile: normal_user
+  user_max_turns: 5
+  user_goal: >
     如果智能体询问使用哪个数据，请回答使用 schools 数据。
     如果智能体询问缓冲距离，请回答 500 米。
     如果智能体询问输出格式，请回答 GeoJSON。
     不要主动提供未被询问的信息。
+  user_model: rule-based-user
 expected_behavior:
   should_load_skills:
     - gis_buffer_analysis

@@ -1,0 +1,31 @@
+# GeoSkillBench 后端镜像
+# python:3.11-slim（项目 requires-python >=3.11；slim 体积小，无地理重依赖）
+# 依赖走清华 pip 镜像（本机直连 pypi.org 超时）；密钥不入镜像，由 compose env_file 注入。
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # SQLite 兜底：DB 未注入时用本地 reports.db（db.py 自动兜底）
+    DATABASE_URL="" \
+    DEEPSEEK_API_KEY="" \
+    AGENTX_API_KEY=""
+
+WORKDIR /app
+
+# 依赖层：先 COPY 构建清单，复用 pip 缓存层（仅 pyproject 变化时重装）
+COPY pyproject.toml README.md ./
+COPY geoskillbench ./geoskillbench
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -e .
+
+# scenarios/skills/fixtures 等运行期资产（COPY 进镜像，可在容器内跑本地 skill 场景）
+COPY scenarios ./scenarios
+COPY skills ./skills
+COPY fixtures ./fixtures
+
+# 报告产物持久卷（挂载点；compose 里用 named volume 持久化）
+VOLUME ["/app/reports"]
+RUN mkdir -p /app/reports/json /app/reports/markdown
+
+EXPOSE 8000
+
+CMD ["uvicorn", "geoskillbench.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

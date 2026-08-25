@@ -14,7 +14,7 @@ from geoskillbench.models.result import ExecutorSession, ExecutorSessionRequest,
 
 
 class HttpAgentExecutor(Executor):
-    """把外部 HTTP 智能体包成平台 Executor 的黑盒适配器（契约见 docs/Agent接入契约.md）。
+    """把外部 HTTP 智能体包成平台 Executor 的黑盒适配器（契约见 docs/design/01-Agent接入契约.md）。
 
     契约要点：
     - 一问一答：每次 send_message 发一个 HTTP 请求，拿到完整响应即 finished。

@@ -467,12 +467,67 @@ details.result-section summary {
   background: #fbeae9;
 }
 
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.pager-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pager-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.pager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pager-info {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .scenario-form {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 16px 18px;
   margin-bottom: 20px;
   background: #fffdf8;
+}
+
+/* 新建场景表单：按钮/输入框收紧，字体与小标题(.form-group h4, 14px)一致 */
+.scenario-form button {
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 10px;
+}
+
+.scenario-form .form-input {
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+
+/* 断言/rubric 行内与数据表内的紧凑按钮，跟随统一字号 */
+.scenario-form .assertion-head .btn-danger,
+.scenario-form .fixture-remove button {
+  font-size: 14px;
+  padding: 4px 10px;
 }
 
 .form-head {
@@ -600,6 +655,74 @@ textarea.form-input {
   font-size: 12px;
 }
 
+/* 断言 / rubric 编辑器：卡片式行，头部(类型下拉+删除) + 参数区 */
+.assertion-editor {
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-top: 8px;
+}
+
+.assertion-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.assertion-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fffdf8;
+}
+
+.assertion-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assertion-head select {
+  flex: 1;
+}
+
+.assertion-head .btn-danger {
+  padding: 6px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.assertion-fields {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.assertion-fields .field-row {
+  margin-bottom: 0;
+}
+
+/* 断言参数区：field-row 占满整行（外层 .assertion-fields 是两列 grid，
+   若不跨列会把首字段挤进 140~200px 窄格，导致参考数据集下拉显示不全） */
+.assertion-fields .field-row {
+  grid-column: 1 / -1;
+}
+
+/* 参考数据集下拉：给足最小宽度，完整显示数据集名称/id */
+.assertion-fields select.form-input {
+  min-width: 220px;
+}
+
+@media (max-width: 900px) {
+  .assertion-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .overwrite-bar {
   display: flex;
   align-items: center;
@@ -621,4 +744,70 @@ textarea.form-input {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 8px;
+}
+
+.panel-head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.scenario-manager {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  background: #fffdf8;
+}
+
+.manager-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.manager-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.manager-info span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.manager-edit {
+  margin-top: 8px;
+}
+
+.yaml-editor {
+  width: 100%;
+  min-height: 320px;
+  margin-top: 8px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #1a1b1f;
+  color: #e8e6e1;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.yaml-editor:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
 }

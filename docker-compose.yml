@@ -1,0 +1,66 @@
+# GeoSkillBench 编排：backend(fastapi) + frontend(nginx 反代) + postgis(可选，默认启) + mock-agent(可选 profile)
+# 用法：
+#   docker compose up --build            # 启 backend+frontend+postgis
+#   docker compose --profile mock up     # 额外启 mock-agent（离线验证外部 agent）
+# 密钥：.env 注入（DEEPSEEK_API_KEY / AGENTX_API_KEY），models.yaml 只读挂载，均不进镜像。
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    env_file:
+      - .env                       # DEEPSEEK_API_KEY / DATABASE_URL 等（不存在则警告，用默认空）
+    environment:
+      # 显式指向 postgis 服务；若注释掉 postgis，留空即走 SQLite 兜底（db.py）
+      DATABASE_URL: postgresql+psycopg://geo:geo@postgis:5432/geoskillbench
+    volumes:
+      - reports_data:/app/reports          # 报告产物 + SQLite reports.db 持久化
+      - ./models.yaml:/app/models.yaml:ro  # 模型配置只读注入（api_key 走 env，不入镜像）
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgis:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: geo
+      POSTGRES_PASSWORD: geo
+      POSTGRES_DB: geoskillbench
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geo -d geoskillbench"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  mock-agent:
+    build:
+      context: examples/agent_external
+      dockerfile: Dockerfile.mock
+    profiles: ["mock"]            # 默认不启；docker compose --profile mock up
+    ports:
+      - "8901:8901"
+
+volumes:
+  reports_data: {}
+  postgis_data: {}

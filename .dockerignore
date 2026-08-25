@@ -1,0 +1,33 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / 前端（前端镜像单独构建，后端不需要；避免 build context 携带 node_modules）
+frontend/node_modules/
+frontend/dist/
+
+# 报告与本地数据（不 COPY 进镜像，由 compose 卷挂载）
+reports/
+reports.db
+*.db
+
+# 密钥与本地配置
+.env
+.env.*
+!*.example
+
+# IDE
+.idea/
+.vscode/

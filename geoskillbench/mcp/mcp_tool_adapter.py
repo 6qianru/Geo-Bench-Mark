@@ -1,6 +1,28 @@
+"""MCP 工具适配器（迭代 3：真 MCP 客户端）。
+
+把「假 MCP + 硬编码工具实现」改造为「真 MCP 客户端」：
+- 工具实现（geopandas 几何运算）已搬入 `mock_gis_server.py`，作为本地 stdio MCP server 进程。
+- adapter 只负责连 server（当前仅 stdio/mock）、`tools/list` 自动发现工具、`invoke` 走 `tools/call` 协议。
+- mock 与未来云端 server 走同一条 code path（transport 区分 stdio/sse，云端后续接入）。
+
+同步/异步桥接：MCP SDK 的 ClientSession 是 async，而 runner/executor 是同步调用链。
+adapter 内部持有一个后台 event loop 线程，同步方法用 ``run_coroutine_threadsafe`` 桥接，
+对外接口（connect_servers / register_datasets / list_tools / get_agent_tools /
+validate_required_tools / invoke / get_dataset_store / set_output_dir）保持不变。
+"""
+
 from __future__ import annotations
 
+import asyncio
+import atexit
+import json
+import re
+import shutil
+import sys
+import threading
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from geoskillbench.models.result import ToolCallRecord
@@ -13,6 +35,111 @@ class ToolDefinition:
     server: str
     name: str
     optional: bool = False
+    input_schema: dict[str, Any] | None = None
+
+
+def schema_to_pydantic_model(
+    model_name: str, schema: dict[str, Any]
+) -> "type":
+    """把 MCP 工具 inputSchema（JSON Schema）转成 pydantic 模型，供 StructuredTool 生成参数。
+
+    - 顶层必须有 properties（对象）。缺省模型（空参数）返回 None，调用方用无参函数。
+    - 只映射 string/number/integer/boolean/array/object；未知类型按 string 兜底（宽松，避免崩）。
+    - required 里缺默认值 → 必填；有默认值或不在 required → 选填。
+    """
+    props = schema.get("properties") or {}
+    if not props:
+        return None
+    from pydantic import Field, create_model
+
+    _TYPE_MAP = {
+        "string": str,
+        "number": float,
+        "integer": int,
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
+    required = set(schema.get("required") or [])
+    fields: dict[str, Any] = {}
+    for name, prop in props.items():
+        py_type = _TYPE_MAP.get((prop or {}).get("type", "string"), str)
+        has_default = "default" in (prop or {})
+        if name in required and not has_default:
+            fields[name] = (py_type, Field(description=(prop or {}).get("description", "")))
+        else:
+            default = (prop or {}).get("default", None)
+            fields[name] = (
+                py_type,
+                Field(default=default, description=(prop or {}).get("description", "")),
+            )
+    return create_model(model_name, **fields)
+
+
+class _MCPConnection:
+    """一条到 MCP server 的连接（async 客户端，由 adapter 的后台 loop 线程驱动）。"""
+
+    def __init__(self, server_id: str, server: MCPServerConfig, datasets_env: str) -> None:
+        self.server_id = server_id
+        self.server = server
+        self.datasets_env = datasets_env
+        self._stack: AsyncExitStack | None = None
+        self.session: Any | None = None
+        self.tools: list[Any] = []
+
+    async def connect(self) -> list[Any]:
+        transport = (self.server.transport or "stdio").lower()
+        if transport == "mock":
+            # 存量场景 transport=mock：mock 即本地 stdio server，等价映射。
+            transport = "stdio"
+        self._stack = AsyncExitStack()
+        if transport == "stdio":
+            from mcp import ClientSession
+            from mcp.client.stdio import StdioServerParameters, stdio_client
+
+            mock_script = str(Path(__file__).resolve().parent / "mock_gis_server.py")
+            params = StdioServerParameters(
+                command=sys.executable,
+                args=[mock_script],
+                env={"GEO_MCP_DATASETS": self.datasets_env},
+            )
+            read, write = await self._stack.enter_async_context(stdio_client(params))
+        elif transport in ("sse", "http"):
+            from mcp import ClientSession
+            from mcp.client.sse import sse_client
+
+            if not self.server.url:
+                raise ValueError(
+                    f"MCP server '{self.server_id}' transport='{transport}' 需要 url（远程服务地址），"
+                    "mock/stdio 不需要。"
+                )
+            read, write = await self._stack.enter_async_context(sse_client(self.server.url))
+        else:
+            raise NotImplementedError(
+                f"MCP server '{self.server_id}' transport='{transport}' 暂不支持："
+                "支持 stdio/mock（本地）与 sse/http（远程）。"
+            )
+        self.session = await self._stack.enter_async_context(ClientSession(read, write))
+        await self.session.initialize()
+        self.tools = (await self.session.list_tools()).tools
+        return self.tools
+
+    async def call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = await self.session.call_tool(tool_name, arguments or {})
+        text = ""
+        for block in result.content or []:
+            text += getattr(block, "text", "") or ""
+        if result.isError:
+            raise RuntimeError(text.strip() or f"Tool {tool_name} failed on server.")
+        try:
+            return json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError:
+            return {"result": text}
+
+    async def close(self) -> None:
+        if self._stack is not None:
+            await self._stack.aclose()
+            self._stack = None
 
 
 class MCPToolAdapter:
@@ -20,40 +147,131 @@ class MCPToolAdapter:
         self._servers: dict[str, MCPServerConfig] = {}
         self._catalog: dict[str, ToolDefinition] = {}
         self._dataset_store: dict[str, DatasetContext] = {}
+        self._output_dir: Path | None = None
+        self._conns: dict[str, _MCPConnection] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        atexit.register(self.close)
+
+    # ---------- 同步/异步桥接 ----------
+
+    def _ensure_loop(self) -> None:
+        if self._loop is None:
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(target=loop.run_forever, name="mcp-adapter-loop", daemon=True)
+            thread.start()
+            self._loop = loop
+            self._loop_thread = thread
+
+    def _run_async(self, coro: Any, timeout: float = 120.0) -> Any:
+        self._ensure_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=timeout)
+
+    # ---------- 配置与连接 ----------
+
+    def set_output_dir(self, path: str | Path | None) -> None:
+        """生成数据集的落盘目录（runner 每次 run 前设置，run_id 隔离）。"""
+        self._output_dir = Path(path) if path else None
 
     def connect_servers(self, servers: list[MCPServerConfig]) -> None:
+        """连接所有 server，tools/list 自动发现工具填入 _catalog。
+
+        注意：mock server 的数据映射在进程启动时通过 env 注入，因此
+        ``register_datasets`` 必须先于 ``connect_servers`` 调用。
+        """
         self._servers = {server.id: server for server in servers}
+        datasets_env = json.dumps(
+            {alias: dataset.model_dump() for alias, dataset in self._dataset_store.items()},
+            ensure_ascii=False,
+        )
+        for server in servers:
+            conn = _MCPConnection(server.id, server, datasets_env)
+            tools = self._run_async(conn.connect())
+            with self._lock:
+                # mock 下多个 server 暴露同名工具集，工具身份以 name 为准，保留首个归属；
+                # 云端接入后如出现跨 server 同名工具，再引入 (server, name) 复合命名空间。
+                for tool in tools:
+                    self._catalog.setdefault(
+                        tool.name,
+                        ToolDefinition(
+                            server=server.id,
+                            name=tool.name,
+                            input_schema=dict(tool.inputSchema or {}),
+                        ),
+                    )
+            self._conns[server.id] = conn
 
     def register_datasets(self, datasets: dict[str, DatasetContext]) -> None:
         self._dataset_store = dict(datasets)
 
+    # ---------- 工具清单与校验 ----------
+
     def list_tools(self) -> list[ToolDefinition]:
-        return list(self._catalog.values())
+        with self._lock:
+            return list(self._catalog.values())
 
     def validate_required_tools(self, required_tools: list[ToolRef]) -> None:
-        missing = [
-            f"{tool.server}:{tool.name}"
-            for tool in required_tools
-            if tool.name not in self._catalog or self._catalog[tool.name].server != tool.server
-        ]
+        with self._lock:
+            # mock/stdio 下工具身份以 name 为准（server 只是归属标签）；缺失按 name 判定。
+            # 云端跨 server 同名工具后续接入时再收紧为 (server, name) 精确匹配。
+            missing = [tool.name for tool in required_tools if tool.name not in self._catalog]
         if missing:
             missing_text = ", ".join(missing)
             raise ValueError(f"Required MCP tools are missing: {missing_text}")
 
+    def missing_tools(self, tool_names: list[str]) -> list[str]:
+        """返回已发现工具中不存在的工具名（供 skill 所需工具 fail-fast 校验用）。"""
+        with self._lock:
+            return [name for name in tool_names if name not in self._catalog]
+
     def get_agent_tools(self, required_tools: list[ToolRef], optional_tools: list[ToolRef]) -> dict[str, Callable]:
-        self._catalog = {}
-        for tool in required_tools:
-            self._catalog[tool.name] = ToolDefinition(server=tool.server, name=tool.name, optional=False)
-        for tool in optional_tools:
-            self._catalog[tool.name] = ToolDefinition(server=tool.server, name=tool.name, optional=True)
-        return {tool_name: self._build_tool_callable(tool_name) for tool_name in self._catalog}
+        """返回已发现工具名 → 可调用对象（arg dict → 结果 dict）。工具来自 server 自动发现。"""
+        with self._lock:
+            names = list(self._catalog.keys())
+        tools: dict[str, Callable] = {}
+        for name in names:
+            def _make(tool_name: str) -> Callable:
+                def callable(arguments: dict[str, Any]) -> dict[str, Any]:
+                    record = self.invoke(tool_name, arguments)
+                    if record.status != "success":
+                        raise RuntimeError(record.error_message or f"Tool {tool_name} failed.")
+                    return record.result or {}
+                return callable
+            tools[name] = _make(name)
+        return tools
+
+    def get_dataset_store(self) -> dict[str, DatasetContext]:
+        return self._dataset_store
+
+    # ---------- 工具调用 ----------
 
     def invoke(self, tool_name: str, arguments: dict[str, Any]) -> ToolCallRecord:
-        tool = self._build_tool_callable(tool_name)
+        with self._lock:
+            defn = self._catalog.get(tool_name)
+        if defn is None:
+            return ToolCallRecord(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=None,
+                status="failed",
+                error_message=f"No implementation for tool {tool_name}",
+            )
+        conn = self._conns.get(defn.server)
+        if conn is None:
+            return ToolCallRecord(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=None,
+                status="failed",
+                error_message=f"Server '{defn.server}' not connected",
+            )
         try:
-            result = tool(arguments)
+            result = self._run_async(conn.call(tool_name, arguments or {}))
+            self._register_generated_dataset(result)
             return ToolCallRecord(tool_name=tool_name, arguments=arguments, result=result, status="success")
-        except Exception as exc:  # pragma: no cover - defensive path
+        except Exception as exc:
             return ToolCallRecord(
                 tool_name=tool_name,
                 arguments=arguments,
@@ -62,80 +280,58 @@ class MCPToolAdapter:
                 error_message=str(exc),
             )
 
-    def get_dataset_store(self) -> dict[str, DatasetContext]:
-        return self._dataset_store
+    def close(self) -> None:
+        conns = list(self._conns.values())
+        self._conns.clear()
+        if not conns or self._loop is None:
+            return
+        try:
+            async def _close_all() -> None:
+                for conn in conns:
+                    try:
+                        await conn.close()
+                    except Exception:
+                        pass
+            asyncio.run_coroutine_threadsafe(_close_all(), self._loop).result(timeout=10)
+        except Exception:
+            pass
 
-    def _build_tool_callable(self, tool_name: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
-        implementations = {
-            "query_dataset_metadata": self._query_dataset_metadata,
-            "reproject_dataset": self._reproject_dataset,
-            "create_buffer": self._create_buffer,
-            "publish_map": self._publish_map,
-        }
-        if tool_name not in implementations:
-            raise ValueError(f"No implementation for tool {tool_name}")
-        return implementations[tool_name]
+    # ---------- 生成数据集注册与落盘（client 端职责） ----------
 
-    def _resolve_dataset(self, alias_or_handle: str) -> tuple[str, DatasetContext]:
-        if alias_or_handle in self._dataset_store:
-            return alias_or_handle, self._dataset_store[alias_or_handle]
-        for alias, dataset in self._dataset_store.items():
-            if dataset.handle == alias_or_handle:
-                return alias, dataset
-        raise ValueError(f"Dataset not found: {alias_or_handle}")
+    def _register_generated_dataset(self, result: dict[str, Any]) -> None:
+        """create_buffer/reproject 返回的生成数据集：落盘到 output_dir 并登记进 _dataset_store。
 
-    def _query_dataset_metadata(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        alias, dataset = self._resolve_dataset(arguments["dataset"])
-        return {
-            "dataset": alias,
-            "handle": dataset.handle,
-            "geometry_type": dataset.geometry_type,
-            "crs": dataset.crs,
-            "feature_count": dataset.feature_count,
-            "fields": dataset.fields,
-        }
-
-    def _reproject_dataset(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        alias, dataset = self._resolve_dataset(arguments["dataset"])
-        target_crs = arguments.get("target_crs", "EPSG:3857")
-        output_alias = arguments.get("output_alias", f"{alias}_reprojected")
-        reprojected = dataset.model_copy(
-            update={
-                "handle": dataset.handle.replace(alias, output_alias),
-                "crs": target_crs,
-                "source_alias": alias,
-            }
+        server 端是无状态的（算完返回临时文件路径），结果持久化归 client 端。
+        """
+        if not isinstance(result, dict):
+            return
+        alias = result.get("dataset")
+        handle = result.get("handle")
+        path = result.get("path")
+        if not (alias and handle and path):
+            return
+        local_path = self._persist_result(str(path), alias)
+        self._dataset_store[alias] = DatasetContext(
+            handle=handle,
+            name=alias,
+            geometry_type=result.get("geometry_type"),
+            crs=result.get("crs"),
+            feature_count=result.get("feature_count"),
+            fields=result.get("fields") or [],
+            path=local_path,
+            source_alias=alias,
+            metadata={"source": "mcp_generated", "server_side_path": str(path)},
         )
-        self._dataset_store[output_alias] = reprojected
-        return {"dataset": output_alias, "handle": reprojected.handle, "crs": target_crs}
+        result["path"] = local_path
 
-    def _create_buffer(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        alias, dataset = self._resolve_dataset(arguments["dataset"])
-        output_alias = arguments.get("output_alias", "buffer_result")
-        buffered = dataset.model_copy(
-            update={
-                "handle": f"dataset://generated/{output_alias}",
-                "geometry_type": "Polygon",
-                "source_alias": alias,
-                "metadata": {
-                    **dataset.metadata,
-                    "buffer_distance": arguments.get("distance"),
-                    "buffer_unit": arguments.get("distance_unit", "meter"),
-                },
-            }
-        )
-        self._dataset_store[output_alias] = buffered
-        return {
-            "dataset": output_alias,
-            "handle": buffered.handle,
-            "geometry_type": buffered.geometry_type,
-            "crs": buffered.crs,
-        }
-
-    def _publish_map(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        alias, dataset = self._resolve_dataset(arguments["dataset"])
-        return {
-            "dataset": alias,
-            "handle": dataset.handle,
-            "map_url": f"https://example.local/maps/{alias}",
-        }
+    def _persist_result(self, src: str, alias: str) -> str:
+        if self._output_dir is None:
+            self._output_dir = Path("reports") / "outputs"
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r"[^A-Za-z0-9_\-]+", "_", alias)
+        target = self._output_dir / f"{safe}.geojson"
+        try:
+            shutil.copyfile(src, target)
+        except OSError:
+            return src  # 源文件读不到则退回 server 端路径
+        return str(target)

@@ -283,6 +283,9 @@ class MCPToolAdapter:
     def close(self) -> None:
         conns = list(self._conns.values())
         self._conns.clear()
+        self._catalog.clear()
+        self._dataset_store.clear()
+        self._servers.clear()
         if not conns or self._loop is None:
             return
         try:

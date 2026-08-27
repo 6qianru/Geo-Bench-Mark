@@ -56,13 +56,19 @@ MVP 闭环 → 阶段1 外部智能体黑盒接入 → 阶段2 报告 DB 持久�
 | 迭代 3 | —（基于迭代 1 基座展开，无独立计划） | [迭代3-模拟用户actor自动多轮.md](retrospective/迭代3-模拟用户actor自动多轮.md)（后续被反问闭环下沉重构取代，见文内注） |
 | 重构（迭代间） | — | [反问闭环下沉重构.md](retrospective/反问闭环下沉重构.md)（ActorRuntime/AgentRuntime → UserSimulator） |
 | 迭代 4 | [迭代4-云端MCP工具接入.md](plan/迭代4-云端MCP工具接入.md) | [迭代4-云端MCP工具接入.md](retrospective/迭代4-云端MCP工具接入.md) |
+| 迭代 5 | [迭代5-MCP全面服务化与DB数据面.md](plan/迭代5-MCP全面服务化与DB数据面.md)（已立项未启动） | — |
 
 > 编号说明：云端 MCP 接入立项时曾称"迭代 3"，因与已有的"迭代 3（模拟用户 actor 多轮）"冲突，整理文档时重编号为迭代 4。
 
+### 待定企划池
+
+[plan/企划池.md](plan/企划池.md) — 有价值但近期不排期的特性想法集中管理（批量重复运行聚合、报告地图可视化、spatial_relation 断言、forbidden_behavior、judge 结构化输出、反问协议结构化、nanobot 真实运行时、云端数据面、前端表单完善）。启动某项时从池中提拔为独立迭代计划。
+
 ## 待办
 
-- [ ] 真机验证收尾：迭代 2 LLM judge 质量评估（deepseek-v4-flash 真机 rubric 合理性）、LLM persona 模拟用户质量、external_driven 真机联调
-- [ ] harness 方差量化（迭代 1 遗留；量化时叠加"模拟用户实现方式"变量，见重构复盘 §5）
-- [ ] 云端数据面打通评估（迭代 4 复盘 §7：fixture 语义能否映射云端数据集接口）
+- [ ] 真机验证收尾：LLM judge 质量评估（deepseek-v4-flash 真机 rubric 合理性）、LLM persona 模拟用户质量、external_driven 真机联调
+  - 其中 LLM judge 质量评估 + harness 方差量化已立项为"真机标定批次"，**现降级待定**：[../plan/待定企划-真机标定批次-方差量化与Judge质量.md](plan/待定企划-真机标定批次-方差量化与Judge质量.md)；模拟用户规则 vs persona 对比在其批次 A 变量矩阵内一并观察
+- [x] ~~harness 方差量化~~（并入迭代 5）
 - [ ] http transport MCP server 真机验证
-- [ ] 规划期断言落地评估：field_exists / spatial_relation / forbidden_behavior（design/00 §10.9/10.10/10.12）
+
+已移入[企划池](plan/企划池.md)（有价值但近期不排期）：云端数据面打通（#8）、spatial_relation / forbidden_behavior 断言落地（#3/#4）；`field_exists` 经评估价值极小，建议从规划中剔除（design/00 §10 已标注未实现）。

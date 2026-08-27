@@ -24,38 +24,72 @@ class JudgeEngine:
                 passed=assertion_result.passed,
                 reason="Judge disabled by scenario config.",
                 judge_mode="disabled",
+                status="skipped",
             )
 
-        # 1) LLM 优先：judge_model 空则跟随 agent_model；以 rule-based- 开头视为未配真实模型
+        # 1) 显式规则 Judge：rule-based-* 是用户主动选择的判定模式，不是 LLM fallback。
         judge_model = scenario.runtime.judge_model or scenario.runtime.agent_model
-        degrade_reason = None
-        if not judge_model or judge_model.startswith("rule-based-"):
-            # 未配真实模型也要显式说明降级原因，不能静默走规则
-            degrade_reason = f"未配置真实 judge 模型（judge_model/agent_model = {judge_model or '(空)'}）"
-        else:
-            try:
-                llm = build_llm(judge_model, temperature=0.0, config=load_models_config())
-                llm_result = run_llm_judge(scenario, recorder, assertion_result, llm, judge_model=judge_model)
-                llm_result.passed = (
-                    llm_result.score >= scenario.pass_criteria.judge_score_min and assertion_result.passed
-                )
-                if not llm_result.reason:
-                    llm_result.reason = (
-                        "智能体按场景完成了主要流程。"
-                        if llm_result.passed
-                        else "智能体未满足全部通过标准。"
-                    )
-                return llm_result
-            except LlmJudgeUnavailable as exc:
-                degrade_reason = str(exc)
-            except Exception as exc:
-                degrade_reason = f"LLM 构建/调用异常：{exc}"
+        if not judge_model:
+            return self._unavailable_judge("未配置真实 judge 模型（judge_model/agent_model 为空）")
+        if judge_model.startswith("rule-based-"):
+            return self._rule_judge(scenario, assertion_result, recorder)
 
-        # 2) 显式降级：规则判定（rule-skill/rule-agent）。LLM 不可用原因进 issues，非静默成功。
-        result = self._rule_judge(scenario, assertion_result, recorder)
-        if degrade_reason:
-            result.issues.insert(0, f"LLM judge 不可用：{degrade_reason}，已降级为规则判定。")
-        return result
+        try:
+            llm = build_llm(judge_model, temperature=0.0, config=load_models_config())
+            llm_result = run_llm_judge(scenario, recorder, assertion_result, llm, judge_model=judge_model)
+            llm_result.passed = (
+                llm_result.score >= scenario.pass_criteria.judge_score_min
+                and assertion_result.status != "failed"
+            )
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            llm_result.status = "passed" if llm_result.passed else "failed"
+            if not llm_result.reason:
+                llm_result.reason = (
+                    "智能体按场景完成了主要流程。"
+                    if llm_result.passed
+                    else "智能体未满足全部通过标准。"
+                )
+            return llm_result
+        except LlmJudgeUnavailable as exc:
+            return self._unavailable_judge(str(exc), judge_model)
+        except Exception as exc:
+            return self._unavailable_judge(f"LLM 构建/调用异常：{exc}", judge_model)
+
+    @staticmethod
+    def _unavailable_judge(reason: str, model: str = "") -> JudgeResult:
+        return JudgeResult(
+            score=0.0,
+            passed=False,
+            reason="LLM Judge unavailable; evaluation is not evaluable.",
+            issues=[reason],
+            judge_mode="error",
+            model=model,
+            status="unavailable",
+            fallback_reason=reason,
+        )
 
     def _rule_judge(
         self,
@@ -102,7 +136,7 @@ class JudgeEngine:
                 score = max(0.0, score - 0.05)
 
         score = round(max(0.0, min(1.0, score)), 2)
-        passed = score >= scenario.pass_criteria.judge_score_min and assertion_result.passed
+        passed = score >= scenario.pass_criteria.judge_score_min and assertion_result.status != "failed"
         reason = "智能体按场景完成了主要流程。" if passed else "智能体未满足全部通过标准。"
         if not issues and not passed:
             issues.append("Assertion coverage or final response quality did not reach the pass threshold.")
@@ -113,4 +147,5 @@ class JudgeEngine:
             issues=issues,
             suggestions=suggestions,
             judge_mode=judge_mode,
+            status="passed" if passed else "failed",
         )

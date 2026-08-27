@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RuntimeConfig(BaseModel):
@@ -124,6 +124,12 @@ class PassCriteria(BaseModel):
     required_assertions_passed: bool = True
     judge_score_min: float = 0.8
 
+    @model_validator(mode="after")
+    def _check_legacy_assertion_flag(self) -> "PassCriteria":
+        if not self.required_assertions_passed:
+            raise ValueError("pass_criteria.required_assertions_passed=false 已废弃；断言默认是硬门槛")
+        return self
+
 
 class AgentConfig(BaseModel):
     """agent_test 模式下外部智能体接入配置（见 docs/design/01-Agent接入契约.md）"""
@@ -160,6 +166,7 @@ class TargetConfig(BaseModel):
 
 
 class Scenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id: str
     name: str
     version: str

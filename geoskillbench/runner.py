@@ -11,7 +11,7 @@ from geoskillbench.fixtures.fixture_manager import FixtureManager
 from geoskillbench.loader.scenario_loader import ScenarioLoader
 from geoskillbench.loader.skill_loader import SkillLoader
 from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
-from geoskillbench.models.result import ExecutorSessionRequest, TestResult
+from geoskillbench.models.result import FailureRecord, ExecutorSessionRequest, TestResult
 from geoskillbench.models.scenario import AgentConfig
 from geoskillbench.models.test_context import MCPToolContext, SkillContext, TestContext
 from geoskillbench.recorder.execution_recorder import ExecutionRecorder
@@ -46,6 +46,65 @@ def _user_config(agent: AgentConfig | None) -> dict[str, Any]:
         "user_model": agent_dict.get("user_model", "rule-based-user"),
         "ask_user": agent_dict.get("ask_user", False),
     }
+
+
+def _failure(
+    failures: list[FailureRecord],
+    *,
+    phase: str,
+    code: str,
+    message: str,
+    source: str = "platform",
+    fatal: bool = True,
+    retryable: bool = False,
+) -> None:
+    failures.append(
+        FailureRecord(
+            phase=phase,
+            code=code,
+            message=message,
+            source=source,  # type: ignore[arg-type]
+            fatal=fatal,
+            retryable=retryable,
+        )
+    )
+
+
+def _evaluation_verdict(
+    *,
+    execution_ok: bool,
+    assertion_result: Any | None,
+    judge_result: Any | None,
+) -> str:
+    if not execution_ok:
+        return "failed"
+    if assertion_result is None or judge_result is None:
+        return "not_evaluable"
+    if assertion_result.status == "skipped":
+        if judge_result.judge_mode == "disabled" or judge_result.status in {"unavailable", "invalid"}:
+            return "not_evaluable"
+        return "passed" if judge_result.passed else "failed"
+    if not assertion_result.passed:
+        return "failed"
+    if judge_result.status in {"unavailable", "invalid"} or judge_result.judge_mode == "error":
+        return "not_evaluable"
+    return "passed" if judge_result.passed else "failed"
+
+
+def _top_level_status(
+    evaluation_verdict: str,
+    operational_status: str,
+    archive_status: str,
+    cleanup_status: str,
+    failures: list[FailureRecord],
+) -> str:
+    return "passed" if (
+        evaluation_verdict == "passed"
+        and operational_status == "succeeded"
+        and archive_status in {"succeeded", "not_attempted"}
+        and cleanup_status in {"succeeded", "not_attempted"}
+        and not any(failure.fatal for failure in failures)
+    ) else "failed"
 
 
 class TestRunner:
@@ -96,10 +155,15 @@ class TestRunner:
         # 数据库拉取临时文件目录（cleanup 时删除，不进报告产物）
         self.fixture_manager.set_work_dir(base_output / "outputs" / run_id / "_db_pull")
         stage_results = {stage: "PENDING" for stage in STAGES}
+        failures: list[FailureRecord] = []
+        execution_status = "running"
+        termination_reason = "completed"
         start_time = time.perf_counter()
         recorder = ExecutionRecorder(scenario_id=Path(scenario_path).stem)
         test_context = None
         scenario = None
+        executor = None
+        session = None
 
         def emit(event_type: str, **payload: Any) -> None:
             if event_callback is not None:
@@ -231,6 +295,7 @@ class TestRunner:
             output_artifacts: dict[str, Any] = {}
             final_response = ""
             run_failed = False
+            agent_finished = False
             current_message = scenario.user_task
             turn_limit = scenario.runtime.max_turns
 
@@ -260,10 +325,20 @@ class TestRunner:
 
                 if step_result.error_message:
                     run_failed = True
+                    execution_status = "failed"
+                    termination_reason = "agent_error"
+                    _failure(
+                        failures,
+                        phase="RUN_AGENT",
+                        code="agent_error",
+                        message=step_result.error_message,
+                        source="sut",
+                    )
                     recorder.record_error(step_result.error_message)
                     break
 
                 if step_result.finished:
+                    agent_finished = True
                     break
 
                 # 兼容：老 executor 返回 need_interaction 但反问闭环已下沉到 executor 内部，
@@ -271,6 +346,9 @@ class TestRunner:
                 break
 
             executor.close_session(session.session_id)
+            runtime_mode = session.runtime_mode
+            runtime_metadata = session.runtime_metadata
+            session = None
             recorder.record_conversation(conversation)
             recorder.record_tool_calls(tool_calls)
             final_datasets = self.adapter.get_dataset_store()
@@ -282,7 +360,15 @@ class TestRunner:
                     "external_interactions": recorder.external_interactions,
                 }
             )
-            stage_results["RUN_AGENT"] = "FAILED" if run_failed or not final_response else "PASSED"
+            stage_results["RUN_AGENT"] = "FAILED" if run_failed or not final_response or not agent_finished else "PASSED"
+            if not run_failed and not final_response:
+                execution_status = "failed"
+                termination_reason = "empty_response"
+                _failure(failures, phase="RUN_AGENT", code="empty_response", message="Executor returned an empty response.", source="sut")
+            elif not run_failed and not agent_finished:
+                execution_status = "failed"
+                termination_reason = "unfinished"
+                _failure(failures, phase="RUN_AGENT", code="unfinished", message="Executor did not finish the run.", source="sut")
             emit(
                 "agent_result",
                 stage="RUN_AGENT",
@@ -321,15 +407,25 @@ class TestRunner:
                 model=judge_result.model,
             )
 
+            stage_results["CLEANUP"] = "RUNNING"
+            emit("stage", stage="CLEANUP", status="RUNNING", stage_results=dict(stage_results))
+            self.fixture_manager.cleanup(test_context)
+            self.adapter.close()
+            stage_results["CLEANUP"] = "PASSED"
+
             stage_results["GENERATE_REPORT"] = "RUNNING"
             emit("stage", stage="GENERATE_REPORT", status="RUNNING", stage_results=dict(stage_results))
             duration_ms = int((time.perf_counter() - start_time) * 1000)
-            status = "passed" if assertion_result.passed and judge_result.passed else "failed"
+            evaluation_verdict = _evaluation_verdict(
+                execution_ok=stage_results["RUN_AGENT"] == "PASSED",
+                assertion_result=assertion_result,
+                judge_result=judge_result,
+            )
             result = TestResult(
                 run_id=run_id,
                 scenario_id=scenario.id,
                 scenario_name=scenario.name,
-                status=status,
+                status="failed",
                 duration_ms=duration_ms,
                 stage_results=dict(stage_results),
                 skill=test_context.skill.model_dump() if test_context.skill else None,
@@ -340,24 +436,41 @@ class TestRunner:
                 final_output={
                     "final_response": recorder.final_output["final_response"],
                     "executor": runtime_executor,
-                    "runtime_mode": session.runtime_mode,
-                    "runtime_metadata": session.runtime_metadata,
+                    "runtime_mode": runtime_mode,
+                    "runtime_metadata": runtime_metadata,
                     "output_artifacts": output_artifacts,
                     "external_interactions": recorder.final_output.get("external_interactions", []),
                 },
                 loaded_skill_references=recorder.loaded_skill_references,
                 errors=recorder.errors,
+                operational_status=execution_status if execution_status != "running" else "succeeded",
+                evaluation_verdict=evaluation_verdict,
+                termination_reason=termination_reason,
+                archive_status="pending",
+                cleanup_status="succeeded",
+                failures=failures,
             )
-            stage_results["GENERATE_REPORT"] = "PASSED"
-            emit("stage", stage="GENERATE_REPORT", status="PASSED", stage_results=dict(stage_results))
-            stage_results["CLEANUP"] = "RUNNING"
-            emit("stage", stage="CLEANUP", status="RUNNING", stage_results=dict(stage_results))
-            self.fixture_manager.cleanup(test_context)
-            stage_results["CLEANUP"] = "PASSED"
-            result.stage_results = dict(stage_results)
+            result.archive_status = "succeeded" if output_dir else "not_attempted"
+            result.status = _top_level_status(
+                result.evaluation_verdict,
+                result.operational_status,
+                result.archive_status,
+                result.cleanup_status,
+                result.failures,
+            )
             if output_dir:
-                self.report_generator.write_reports(output_dir, result)
-            emit("result", stage="CLEANUP", status=result.status, stage_results=dict(stage_results), result=result.model_dump())
+                try:
+                    self.report_generator.write_reports(output_dir, result)
+                except Exception as exc:
+                    # 归档失败不改写 SUT 评测结论，仅把顶层状态拉为 failed
+                    result.archive_status = "failed"
+                    _failure(result.failures, phase="GENERATE_REPORT", code="archive_error", message=str(exc), source="archive")
+                    result.errors.append(f"Archive failed: {exc}")
+                    result.status = "failed"
+            stage_results["GENERATE_REPORT"] = "PASSED" if result.archive_status != "failed" else "FAILED"
+            result.stage_results = dict(stage_results)
+            emit("stage", stage="GENERATE_REPORT", status="PASSED", stage_results=dict(stage_results))
+            emit("result", stage="GENERATE_REPORT", status=result.status, stage_results=dict(stage_results), result=result.model_dump())
             return result
         except Exception as exc:
             recorder.record_error(str(exc))
@@ -366,8 +479,13 @@ class TestRunner:
             emit("error", stage=failed_stage, status="FAILED", stage_results=dict(stage_results), message=str(exc))
             stage_results["CLEANUP"] = "RUNNING"
             emit("stage", stage="CLEANUP", status="RUNNING", stage_results=dict(stage_results))
-            # 无论 test_context 是否已构造都要清理（PREPARE_DATA 阶段失败也会留下 DB 拉取目录）
+            if session is not None and executor is not None:
+                try:
+                    executor.close_session(session.session_id)
+                except Exception:
+                    pass  # 异常路径的关闭失败不掩盖原始错误
             self.fixture_manager.cleanup(test_context)
+            self.adapter.close()
             stage_results["CLEANUP"] = "PASSED"
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             if scenario is None:
@@ -388,11 +506,17 @@ class TestRunner:
                 skill=skill_info,
                 tool_calls=[call.model_dump() for call in recorder.tool_calls],
                 assertions=[],
-                judge={"score": 0.0, "passed": False, "reason": "Runner failed before judge execution."},
+                judge={"score": 0.0, "passed": False, "reason": "Runner failed before judge execution.", "status": "failed"},
                 conversation=recorder.conversation,
                 final_output=recorder.final_output,
                 loaded_skill_references=recorder.loaded_skill_references,
                 errors=recorder.errors,
+                operational_status="failed",
+                evaluation_verdict="not_evaluable",
+                termination_reason="runner_error",
+                archive_status="not_attempted",
+                cleanup_status="succeeded",
+                failures=[FailureRecord(phase=failed_stage, code="runner_error", message=str(exc), source="platform")],
             )
             emit("result", stage="CLEANUP", status="failed", stage_results=dict(stage_results), result=result.model_dump())
             return result

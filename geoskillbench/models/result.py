@@ -8,6 +8,37 @@ from geoskillbench.models.skill import LoadedSkillReference
 
 
 StageStatus = Literal["PENDING", "RUNNING", "PASSED", "FAILED", "SKIPPED"]
+OperationalStatus = Literal["not_started", "running", "succeeded", "failed", "timed_out", "cancelled"]
+EvaluationVerdict = Literal["passed", "failed", "not_evaluable", "skipped"]
+TerminationReason = Literal[
+    "completed",
+    "configuration_error",
+    "environment_error",
+    "agent_error",
+    "empty_response",
+    "unfinished",
+    "turn_limit",
+    "runtime_timeout",
+    "assertion_error",
+    "judge_unavailable",
+    "judge_invalid",
+    "archive_error",
+    "cleanup_error",
+    "runner_error",
+]
+ArchiveStatus = Literal["pending", "succeeded", "failed", "partial", "not_attempted"]
+CleanupStatus = Literal["pending", "succeeded", "failed", "partial", "not_attempted"]
+FailureSource = Literal["sut", "configuration", "environment", "platform", "judge", "archive", "cleanup"]
+
+
+class FailureRecord(BaseModel):
+    phase: str
+    code: str
+    message: str
+    source: FailureSource = "platform"
+    fatal: bool = True
+    retryable: bool = False
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolCallRecord(BaseModel):
@@ -61,8 +92,6 @@ class ExecutorStepResult(BaseModel):
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     artifacts: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
-    # 反问闭环下沉后，executor 内部跑完整多轮对话，返回完整会话记录（[{role, content}, ...]）；
-    # runner 用它整体替换自拼 conversation，保证 report 的完整对话包含模拟用户回答。空则老 executor 兼容。
     conversation: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -77,6 +106,7 @@ class AssertionResult(BaseModel):
     passed: bool
     score: float
     items: list[AssertionItemResult] = Field(default_factory=list)
+    status: Literal["passed", "failed", "skipped"] = "passed"
 
 
 class JudgeResult(BaseModel):
@@ -85,15 +115,14 @@ class JudgeResult(BaseModel):
     reason: str = ""
     issues: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
-    # 判定模式：llm=LLM判定；rule-skill=完整规则(含句柄/CRS契约扣分，仅 skill 场景)；
-    # rule-agent=宽松规则(跳过句柄/CRS，agent 场景)；disabled=场景显式关闭；error=判定失败。
-    # 默认 rule-skill：存量报告(多为 skill 场景)反序列化不崩且语义贴近。
     judge_mode: Literal["llm", "rule-skill", "rule-agent", "disabled", "error"] = "rule-skill"
-    model: str = ""  # LLM 判定时记录所用模型别名
+    model: str = ""
+    status: Literal["passed", "failed", "skipped", "unavailable", "invalid"] = "passed"
+    fallback_reason: str | None = None
 
 
 class TestResult(BaseModel):
-    run_id: str = ""  # 每次运行的唯一 ID，阶段二起用于区分同 scenario 的多份报告（不再覆盖）
+    run_id: str = ""
     scenario_id: str
     scenario_name: str
     status: Literal["passed", "failed"]
@@ -107,3 +136,9 @@ class TestResult(BaseModel):
     final_output: dict[str, Any] = Field(default_factory=dict)
     loaded_skill_references: list[LoadedSkillReference] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    operational_status: OperationalStatus = "succeeded"
+    evaluation_verdict: EvaluationVerdict = "not_evaluable"
+    termination_reason: TerminationReason = "completed"
+    archive_status: ArchiveStatus = "not_attempted"
+    cleanup_status: CleanupStatus = "not_attempted"
+    failures: list[FailureRecord] = Field(default_factory=list)

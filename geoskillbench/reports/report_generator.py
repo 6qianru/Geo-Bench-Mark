@@ -4,18 +4,24 @@ import json
 from pathlib import Path
 
 from geoskillbench.models.result import TestResult
+from geoskillbench.security.redaction import redact
 
 
 class ReportGenerator:
     def generate_json(self, result: TestResult) -> str:
-        return result.model_dump_json(indent=2)
+        return json.dumps(redact(result.model_dump()), ensure_ascii=False, indent=2)
 
     def generate_markdown(self, result: TestResult) -> str:
         lines = [
             f"# {result.scenario_name}",
             "",
             f"- Scenario ID: `{result.scenario_id}`",
+            f"- Run ID: `{result.run_id}`",
             f"- Status: `{result.status}`",
+            f"- Evaluation verdict: `{result.evaluation_verdict}`",
+            f"- Operational status: `{result.operational_status}`",
+            f"- Termination reason: `{result.termination_reason}`",
+            f"- Archive: `{result.archive_status}`; Cleanup: `{result.cleanup_status}`",
             f"- Duration: `{result.duration_ms} ms`",
             f"- Judge Score: `{result.judge.get('score', 0)}` (mode: `{result.judge.get('judge_mode', '')}`)",
             "",
@@ -88,6 +94,8 @@ class ReportGenerator:
         return "\n".join(lines)
 
     def write_reports(self, output_dir: str, result: TestResult) -> tuple[Path, Path]:
+        # run 级目录（reports/runs/<run_id>/）与 latest 兼容视图属于后续 artifact 迭代，
+        # 5A 保持 scenario_id 旧布局，/api/reports 行为不变。
         base_dir = Path(output_dir)
         json_dir = base_dir / "json"
         md_dir = base_dir / "markdown"
@@ -110,9 +118,10 @@ class ReportGenerator:
         """
         from geoskillbench.api import db
 
+        safe_result = redact(result.model_dump())
         executor = ""
-        if isinstance(result.final_output, dict):
-            executor = result.final_output.get("executor", "") or ""
+        if isinstance(safe_result.get("final_output"), dict):
+            executor = safe_result["final_output"].get("executor", "") or ""
         try:
             db.save_report(
                 {
@@ -128,4 +137,4 @@ class ReportGenerator:
         except Exception as exc:  # pragma: no cover - DB 故障不应中断评测
             import logging
 
-            logging.getLogger(__name__).warning("Failed to persist report to DB: %s", exc)
+            logging.getLogger(__name__).warning("Failed to persist report to DB: %s", redact(str(exc)))

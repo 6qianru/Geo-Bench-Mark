@@ -177,7 +177,7 @@ class SkillLoader:
                 if member_name.endswith("/"):
                     continue
                 target = (dest_dir / member_name).resolve()
-                if not str(target).startswith(str(dest_dir)):
+                if not target.is_relative_to(dest_dir):
                     raise ValueError(f"Unsafe zip path: {member_name}")
                 if target.suffix.lower() not in ALLOWED_SKILL_EXTENSIONS:
                     raise ValueError(f"Unsupported file type in skill package: {target.suffix}")

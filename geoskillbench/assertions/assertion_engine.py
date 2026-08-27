@@ -19,10 +19,12 @@ class AssertionEngine:
         recorder: ExecutionRecorder,
         test_context: TestContext,
     ) -> AssertionResult:
+        if not assertions:
+            return AssertionResult(passed=False, score=0.0, items=[], status="skipped")
         items = [self._run_single(assertion, recorder, test_context) for assertion in assertions]
         passed_count = sum(1 for item in items if item.passed)
-        score = round((passed_count / len(items)) if items else 1.0, 2)
-        return AssertionResult(passed=passed_count == len(items), score=score, items=items)
+        score = round(passed_count / len(items), 2)
+        return AssertionResult(passed=passed_count == len(items), score=score, items=items, status="passed" if passed_count == len(items) else "failed")
 
     def _run_single(
         self,

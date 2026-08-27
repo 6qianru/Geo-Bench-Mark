@@ -4,6 +4,32 @@ import json
 import os
 import shutil
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
+from urllib.parse import urlparse
 
 import geopandas as gpd
 from sqlalchemy import create_engine, text
@@ -133,7 +159,13 @@ class FixtureManager:
             path=str(path),
             semantic_desc=f"{fixture.name or fixture.id}（来自数据库表 {schema}.{table}），用于测试场景 {scenario.name}",
             source_alias=fixture.id,
-            metadata={"source": "db_table", "db_url": db_url, "table": table, "schema": schema},
+            metadata={
+                "source": "db_table",
+                "table": table,
+                "schema": schema,
+                "db_host": urlparse(db_url).hostname,
+                "db_database": urlparse(db_url).path.lstrip("/"),
+            },
         )
 
     @staticmethod

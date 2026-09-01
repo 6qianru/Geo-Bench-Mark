@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from io import BytesIO
+from typing import Any, Callable
 
 import geopandas as gpd
 from shapely import hausdorff_distance
@@ -28,6 +29,9 @@ class ResultComparator:
 
     METRICS = {"overlap_ratio", "area_error", "hausdorff_distance", "fields", "feature_count"}
 
+    def __init__(self, reader: Callable[[DatasetContext], bytes] | None = None) -> None:
+        self._reader = reader
+
     def compare(
         self,
         target: DatasetContext,
@@ -37,8 +41,8 @@ class ResultComparator:
     ) -> CompareResult:
         if metric not in self.METRICS:
             return CompareResult(False, None, None, f"Unsupported comparison metric: {metric}")
-        result_gdf = _load_dataset(target, f"result dataset '{target.name or target.handle}'")
-        reference_gdf = _load_dataset(reference, f"reference dataset '{reference.name or reference.handle}'")
+        result_gdf = _load_dataset(target, f"result dataset '{target.name or target.handle}'", self._reader)
+        reference_gdf = _load_dataset(reference, f"reference dataset '{reference.name or reference.handle}'", self._reader)
         handler = getattr(self, f"_{metric}")
         return handler(result_gdf, reference_gdf, **params)
 
@@ -168,10 +172,21 @@ class ResultComparator:
         return result.to_crs(utm), reference.to_crs(utm)
 
 
-def _load_dataset(dataset: DatasetContext, label: str) -> gpd.GeoDataFrame:
-    if not dataset.path:
-        raise ValueError(f"{label} has no local path to compare (结果未落盘？)")
-    gdf = gpd.read_file(dataset.path)
+def _load_dataset(
+    dataset: DatasetContext,
+    label: str,
+    reader: Callable[[DatasetContext], bytes] | None = None,
+) -> gpd.GeoDataFrame:
+    if reader is not None:
+        try:
+            raw = reader(dataset)
+            gdf = gpd.read_file(BytesIO(raw))
+        except Exception as exc:
+            raise ValueError(f"{label} could not be read through evaluation data service") from exc
+    else:
+        if not dataset.path:
+            raise ValueError(f"{label} has no local path to compare (结果未落盘？)")
+        gdf = gpd.read_file(dataset.path)
     if gdf.crs is None:
         gdf = gdf.set_crs("EPSG:4326")
     return gdf

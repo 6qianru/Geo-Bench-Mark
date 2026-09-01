@@ -5,37 +5,13 @@ import os
 import shutil
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
-from urllib.parse import urlparse
 
 import geopandas as gpd
 from sqlalchemy import create_engine, text
 
 from geoskillbench.models.scenario import FixtureConfig, Scenario
 from geoskillbench.models.test_context import DatasetContext
+from geoskillbench.data_service.models import RunRegistration, DatasetDescriptor
 
 
 class FixtureManager:
@@ -46,7 +22,7 @@ class FixtureManager:
     def set_work_dir(self, path: str | Path | None) -> None:
         self._work_dir = Path(path) if path else None
 
-    def prepare(self, scenario: Scenario) -> tuple[dict[str, DatasetContext], dict[str, DatasetContext]]:
+    def prepare(self, scenario: Scenario, registration: RunRegistration | None = None) -> tuple[dict[str, DatasetContext], dict[str, DatasetContext]]:
         """准备数据集，返回 (datasets, reference_datasets)。
 
         - datasets：data.fixtures（输入数据），供 agent 使用（提示词/工具可解析）。
@@ -60,9 +36,28 @@ class FixtureManager:
             datasets[fixture.id] = self._prepare_fixture(fixture, scenario, base_path)
         for fixture in scenario.data.reference:
             reference_datasets[fixture.id] = self._prepare_fixture(fixture, scenario, base_path)
+        if registration is not None:
+            inputs = {item.alias: item for item in registration.inputs}
+            references = {item.alias: item for item in registration.references}
+            datasets = {key: self._context_from_descriptor(value) for key, value in inputs.items()}
+            reference_datasets = {key: self._context_from_descriptor(value) for key, value in references.items()}
         return datasets, reference_datasets
 
     def _prepare_fixture(self, fixture: FixtureConfig, scenario: Scenario, base_path: Path) -> DatasetContext:
+        if fixture.catalog_id or fixture.evaluation_id:
+            role = "reference" if fixture.evaluation_id else "input"
+            logical_id = fixture.evaluation_id or fixture.catalog_id
+            return DatasetContext(
+                handle=f"dh_{scenario.id}_{fixture.id}",
+                name=fixture.name or fixture.id,
+                role=role,
+                run_id=None,
+                crs=fixture.crs,
+                geometry_type=fixture.geometry_type,
+                source_alias=fixture.id,
+                semantic_desc=f"{fixture.name or fixture.id}（服务端逻辑数据引用）",
+                metadata={"logical_id": logical_id},
+            )
         if fixture.format == "db_table":
             return self._prepare_db_table(fixture, scenario)
         fixture_path = (base_path / fixture.path).resolve()
@@ -80,8 +75,24 @@ class FixtureManager:
             metadata=metadata,
         )
 
+    @staticmethod
+    def _context_from_descriptor(descriptor: DatasetDescriptor) -> DatasetContext:
+        return DatasetContext(
+            handle=descriptor.handle,
+            name=descriptor.alias,
+            role=descriptor.role,
+            run_id=descriptor.run_id,
+            geometry_type=descriptor.geometry_type,
+            crs=descriptor.crs,
+            feature_count=descriptor.feature_count,
+            fields=descriptor.fields,
+            expires_at=descriptor.expires_at.isoformat() if descriptor.expires_at else None,
+            metadata={"content_hash": descriptor.content_hash, **descriptor.metadata},
+            source_alias=descriptor.alias,
+        )
+
     def cleanup(self, test_context) -> None:
-        """删除从数据库拉下来的临时文件（DB 数据不进报告产物）。"""
+        """删除历史 db_table 路径产生的临时文件。"""
         if self._work_dir is not None and self._work_dir.exists():
             shutil.rmtree(self._work_dir, ignore_errors=True)
             self._work_dir = None

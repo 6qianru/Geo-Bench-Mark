@@ -18,6 +18,7 @@
 | [design/01-Agent接入契约.md](design/01-Agent接入契约.md) | 外部智能体 HTTP 接入契约：协议、scenario 字段、executor 行为、orchestrator / external_driven / 模拟用户反问闭环 |
 | [design/02-Executor架构与Nanobot接入.md](design/02-Executor架构与Nanobot接入.md) | Executor 定位、会话接口抽象、与 Runner/Judge/Assertion 的边界、nanobot 接入分析 |
 | [design/03-SkillPackage按需加载.md](design/03-SkillPackage按需加载.md) | Skill 包目录规范、`load_skill_reference` 工具、相关断言与 API |
+| [design/04-MCP服务化数据协议.md](design/04-MCP服务化数据协议.md) | 5B 网络 MCP、opaque handle、run 控制面、evaluation 与清理协议 |
 
 ### 操作指南
 
@@ -56,7 +57,9 @@ MVP 闭环 → 阶段1 外部智能体黑盒接入 → 阶段2 报告 DB 持久�
 | 迭代 3 | —（基于迭代 1 基座展开，无独立计划） | [迭代3-模拟用户actor自动多轮.md](retrospective/迭代3-模拟用户actor自动多轮.md)（后续被反问闭环下沉重构取代，见文内注） |
 | 重构（迭代间） | — | [反问闭环下沉重构.md](retrospective/反问闭环下沉重构.md)（ActorRuntime/AgentRuntime → UserSimulator） |
 | 迭代 4 | [迭代4-云端MCP工具接入.md](plan/迭代4-云端MCP工具接入.md) | [迭代4-云端MCP工具接入.md](retrospective/迭代4-云端MCP工具接入.md) |
-| 迭代 5 | [迭代5-MCP全面服务化与DB数据面.md](plan/迭代5-MCP全面服务化与DB数据面.md)（已立项未启动） | — |
+| 迭代 5A | [迭代5A-可信评测基线.md](plan/迭代5A-可信评测基线.md)（已完成） | [迭代5A复盘.md](retrospective/迭代5A复盘.md) |
+| 迭代 5B | [迭代5B-MCP全面服务化与DB数据面.md](plan/迭代5B-MCP全面服务化与DB数据面.md)（平台侧完成，待真机联调） | [迭代5B复盘.md](retrospective/迭代5B复盘.md) |
+| 迭代 6 | [迭代6-批量重复运行与评测标定.md](plan/迭代6-批量重复运行与评测标定.md)（已完成） | [迭代6复盘.md](retrospective/迭代6复盘.md) |
 
 > 编号说明：云端 MCP 接入立项时曾称"迭代 3"，因与已有的"迭代 3（模拟用户 actor 多轮）"冲突，整理文档时重编号为迭代 4。
 

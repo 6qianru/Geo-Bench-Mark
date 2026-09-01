@@ -19,7 +19,6 @@ recommended_mcp_tools:
   - query_dataset_metadata
   - reproject_dataset
   - create_buffer
-  - publish_map
 instructions: |
   你是一个 GIS 缓冲区分析专家。
 
@@ -37,7 +36,6 @@ tool_sequence:
   - query_dataset_metadata
   - reproject_dataset?
   - create_buffer
-  - publish_map?
 expected_outputs:
   - result_dataset_handle
   - result_geometry_type

@@ -1,0 +1,37 @@
+id: agent_buffer_mock
+name: 外部智能体-缓冲区分析(mock, SSE)
+version: "1.0.0"
+type: agent_test
+description: 对 mock 外部 HTTP 智能体做黑盒评测（SSE 流式路径，模拟真实格式）
+target: {}
+runtime:
+  executor: http_agent
+  agent_model: external-agent
+  max_turns: 1
+agent:
+  type: http
+  endpoint: http://127.0.0.1:8901/agentx/workflowstudio/api/v1/run/mock-flow-001
+  query_params:
+    stream: "true"
+  stream_response: true
+  body:
+    input_type: chat
+    output_type: chat
+data: {}
+mcp:
+  servers: []
+  tools:
+    required: []
+    optional: []
+user_task: 对道路要素做 500 米缓冲区分析
+assertions:
+  - type: tool_called
+    tool: buffer_analysis
+  - type: final_response_contains
+    values:
+      - "缓冲区"
+judge:
+  enabled: false
+pass_criteria:
+  required_assertions_passed: true
+  judge_score_min: 0.8

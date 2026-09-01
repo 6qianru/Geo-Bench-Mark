@@ -7,10 +7,11 @@ from typing import Any
 from uuid import uuid4
 
 from geoskillbench.executors.heuristic_executor import HeuristicSessionExecutor
-from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
+from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter, schema_to_pydantic_model
 from geoskillbench.models.result import ExecutorSession, ExecutorSessionRequest, ExecutorStepResult, ToolCallRecord
 from geoskillbench.models.skill import AgentSkill
 from geoskillbench.runtime.llm import build_llm, load_models_config
+from geoskillbench.runtime.user_simulator import UserSimulator
 from geoskillbench.skills.reference_tool import SkillReferenceTool
 
 
@@ -19,7 +20,7 @@ def now_iso() -> str:
 
 
 @dataclass
-class LangGraphSessionState:
+class SkillSessionState:
     request: ExecutorSessionRequest
     skill: AgentSkill
     agent: Any
@@ -29,12 +30,18 @@ class LangGraphSessionState:
     finished: bool = False
     pending_tool_calls: list[ToolCallRecord] = field(default_factory=list)
     output_artifacts: dict[str, Any] = field(default_factory=dict)
+    # 反问闭环（下沉）：模拟用户回答 agent 的 [NEED_INTERACTION] 追问
+    user_simulator: UserSimulator | None = None
+    user_enabled: bool = False
+    user_max_turns: int = 0
+    user_turn: int = 0
+    conversation: list[dict[str, Any]] = field(default_factory=list)  # 完整会话（含模拟用户回答），runner 用它生成 report
 
 
-class LangGraphExecutor(HeuristicSessionExecutor):
+class SkillExecutor(HeuristicSessionExecutor):
     def __init__(self, adapter: MCPToolAdapter) -> None:
-        super().__init__(adapter=adapter, executor_type="langgraph")
-        self.real_sessions: dict[str, LangGraphSessionState] = {}
+        super().__init__(adapter=adapter, executor_type="skill")
+        self.real_sessions: dict[str, SkillSessionState] = {}
         self.models_config = load_models_config()
         self.real_runtime_available, self.runtime_issue = self._check_runtime_available()
         self.last_runtime_metadata: dict[str, Any] = {
@@ -68,8 +75,30 @@ class LangGraphExecutor(HeuristicSessionExecutor):
         try:
             llm = build_llm(model_name, temperature=0.0, config=self.models_config)
             system_prompt = self._build_system_prompt(request, skill)
-            state = LangGraphSessionState(request=request, skill=skill, agent=None, messages=[], reference_tool=reference_tool)
-            tools = self._build_langgraph_tools(state)
+            # 反问闭环：从 runner 注入的 role_model_config["user"] 构造模拟用户（skill 场景无 agent，靠这里注入）
+            user_cfg = request.role_model_config.get("user") or {}
+            user_enabled = bool(user_cfg.get("user_enabled", True))
+            user_max_turns = int(user_cfg.get("user_max_turns") or 5)
+            user_simulator = None
+            if user_enabled:
+                user_simulator = UserSimulator(
+                    goal=str(user_cfg.get("user_goal") or ""),
+                    profile=str(user_cfg.get("user_profile") or "normal_user"),
+                    model=str(user_cfg.get("user_model") or "rule-based-user"),
+                    datasets=request.test_context.get("datasets", {}),
+                    models_config=self.models_config,
+                )
+            state = SkillSessionState(
+                request=request,
+                skill=skill,
+                agent=None,
+                messages=[],
+                reference_tool=reference_tool,
+                user_simulator=user_simulator,
+                user_enabled=user_enabled,
+                user_max_turns=user_max_turns,
+            )
+            tools = self._build_skill_tools(state)
             agent = create_react_agent(llm, tools=tools, prompt=SystemMessage(content=system_prompt))
             state.agent = agent
             self.real_sessions[session_id] = state
@@ -80,7 +109,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
                 "tool_count": len(tools),
             }
         except Exception as exc:
-            fallback_reason = f"LangGraph executor initialization failed: {exc}"
+            fallback_reason = f"Skill executor initialization failed: {exc}"
             self.compatibility_note = fallback_reason
             self.last_runtime_metadata = {
                 "runtime_mode": "compatibility",
@@ -95,7 +124,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
 
         return ExecutorSession(
             session_id=session_id,
-            executor_type="langgraph",
+            executor_type="skill",
             scenario_id=request.scenario_id,
             skill_id=request.skill_id,
             created_at=now_iso(),
@@ -110,28 +139,44 @@ class LangGraphExecutor(HeuristicSessionExecutor):
         from langchain_core.messages import AIMessage, HumanMessage
 
         state = self.real_sessions[session_id]
-        state.messages.append(HumanMessage(content=message))
-        previous_count = len(state.messages)
-        result_state = state.agent.invoke({"messages": state.messages})
-        updated_messages = result_state.get("messages", [])
-        state.messages = updated_messages
-        new_messages = updated_messages[previous_count:]
+        if not state.conversation:
+            state.conversation.append({"role": "user", "content": message})
+        # 反问闭环：agent 输出 [NEED_INTERACTION] → UserSimulator 回答 → 追加 state.messages → 再 invoke，
+        # 直到 [FINAL] / 无协议前缀 / user_max_turns 耗尽。
+        while True:
+            state.messages.append(HumanMessage(content=message))
+            previous_count = len(state.messages)
+            result_state = state.agent.invoke({"messages": state.messages})
+            updated_messages = result_state.get("messages", [])
+            state.messages = updated_messages
+            new_messages = updated_messages[previous_count:]
 
-        final_ai_content = ""
-        for msg in reversed(new_messages):
-            if isinstance(msg, AIMessage) and msg.content:
-                final_ai_content = str(msg.content)
-                break
-        if not final_ai_content:
-            for msg in reversed(updated_messages):
+            final_ai_content = ""
+            for msg in reversed(new_messages):
                 if isinstance(msg, AIMessage) and msg.content:
                     final_ai_content = str(msg.content)
                     break
+            if not final_ai_content:
+                for msg in reversed(updated_messages):
+                    if isinstance(msg, AIMessage) and msg.content:
+                        final_ai_content = str(msg.content)
+                        break
+            state.conversation.append({"role": "assistant", "content": final_ai_content})
 
-        need_interaction = final_ai_content.strip().startswith("[NEED_INTERACTION]")
-        finished = final_ai_content.strip().startswith("[FINAL]")
-        if finished:
-            state.finished = True
+            need_interaction = final_ai_content.strip().startswith("[NEED_INTERACTION]")
+            finished = final_ai_content.strip().startswith("[FINAL]")
+            if finished:
+                state.finished = True
+                break
+            if not need_interaction:
+                break  # 无协议前缀的中间输出 → 结束（行为同存量）
+            if not state.user_enabled or state.user_turn >= state.user_max_turns:
+                break  # 无法回答反问 → 结束
+            reply = state.user_simulator.reply(final_ai_content)
+            state.messages.append(HumanMessage(content=reply))
+            state.conversation.append({"role": "user", "content": reply})
+            message = reply
+            state.user_turn += 1
         state.last_response = final_ai_content
 
         tool_calls = list(state.pending_tool_calls)
@@ -142,6 +187,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
             finished=finished,
             tool_calls=tool_calls,
             artifacts=dict(state.output_artifacts),
+            conversation=list(state.conversation),
         )
 
     def close_session(self, session_id: str) -> None:
@@ -172,7 +218,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
             )
         return base
 
-    def _build_langgraph_tools(self, state: LangGraphSessionState) -> list[Any]:
+    def _build_skill_tools(self, state: SkillSessionState) -> list[Any]:
         from langchain_core.tools import tool
 
         created_tools: list[Any] = []
@@ -199,60 +245,45 @@ class LangGraphExecutor(HeuristicSessionExecutor):
 
             created_tools.append(load_skill_reference)
 
+        # MCP 工具：从 adapter 已发现（tools/list）的工具按 inputSchema 自动生成，不再手写闭包。
+        from langchain_core.tools import StructuredTool
+
         available_tools = request.test_context.get("mcp_tools", {})
+        # 工具可见性 = skill 推荐的工具 ∩ server 已发现工具。
+        # skill.recommended_mcp_tools 是 skill 声明的"完成任务需要的工具"（授权给 LLM 的集合），
+        # 未推荐的工具（如本 demo 不需要的 publish_map）不暴露，避免 LLM 尝试调用不相关的工具。
+        skill_recommended = set(getattr(state.skill, "recommended_mcp_tools", None) or [])
+        tool_defs = self.adapter.list_tools()
+        for defn in tool_defs:
+            if defn.name not in available_tools:
+                continue  # 只暴露 test_context 里声明的工具（兼容：executor 仍按声明可见性过滤）
+            if skill_recommended and defn.name not in skill_recommended:
+                continue  # skill 未推荐的工具不暴露给 agent（如 publish_map）
+            tool_name = defn.name
+            args_schema = schema_to_pydantic_model(f"{tool_name.title().replace('_', '')}Input", defn.input_schema or {}) if defn.input_schema else None
 
-        if "query_dataset_metadata" in available_tools:
-            @tool("query_dataset_metadata")
-            def query_dataset_metadata(dataset: str) -> str:
-                """Query dataset metadata for a dataset alias or handle."""
-                record = self.adapter.invoke("query_dataset_metadata", {"dataset": dataset})
+            def _dynamic_tool(**kwargs: Any) -> str:
+                """MCP server tool. 命名参数由 StructuredTool.args_schema 从 JSON Schema 生成，
+                收到 kwargs 后组回 dict 转发给 adapter.invoke。
+
+                工具失败不抛异常，而是返回错误文本——langgraph 把它作为 ToolMessage 返回给 LLM，
+                LLM 看到错误后修正参数重试（而非直接终止）。工具调用有方差，系统应让 agent 自行纠正。
+                """
+                arguments: dict[str, Any] = dict(kwargs)
+                record = self.adapter.invoke(tool_name, arguments)
                 append_record(record)
+                if record.status != "success":
+                    return f"[工具 {tool_name} 调用失败] {record.error_message or 'unknown error'}"
                 return str(record.result)
 
-            created_tools.append(query_dataset_metadata)
-
-        if "reproject_dataset" in available_tools:
-            @tool("reproject_dataset")
-            def reproject_dataset(dataset: str, target_crs: str, output_alias: str) -> str:
-                """Reproject a dataset to a target CRS."""
-                record = self.adapter.invoke(
-                    "reproject_dataset",
-                    {"dataset": dataset, "target_crs": target_crs, "output_alias": output_alias},
+            created_tools.append(
+                StructuredTool.from_function(
+                    func=_dynamic_tool,
+                    name=tool_name,
+                    description=defn.input_schema.get("description", "") if defn.input_schema else "",
+                    args_schema=args_schema,
                 )
-                append_record(record)
-                return str(record.result)
-
-            created_tools.append(reproject_dataset)
-
-        if "create_buffer" in available_tools:
-            @tool("create_buffer")
-            def create_buffer(dataset: str, distance: float, distance_unit: str = "meter", output_alias: str = "buffer_result") -> str:
-                """Create a buffer around a dataset using a metric distance."""
-                record = self.adapter.invoke(
-                    "create_buffer",
-                    {
-                        "dataset": dataset,
-                        "distance": distance,
-                        "distance_unit": distance_unit,
-                        "output_alias": output_alias,
-                    },
-                )
-                if record.result:
-                    state.output_artifacts["result_dataset"] = record.result
-                append_record(record)
-                return str(record.result)
-
-            created_tools.append(create_buffer)
-
-        if "publish_map" in available_tools:
-            @tool("publish_map")
-            def publish_map(dataset: str) -> str:
-                """Publish a dataset as a map and return the map URL."""
-                record = self.adapter.invoke("publish_map", {"dataset": dataset})
-                append_record(record)
-                return str(record.result)
-
-            created_tools.append(publish_map)
+            )
 
         return created_tools
 
@@ -269,7 +300,7 @@ class LangGraphExecutor(HeuristicSessionExecutor):
         if self.runtime_issue:
             return self.runtime_issue
         if not model_name:
-            return "No agent model configured for LangGraph executor."
+            return "No agent model configured for Skill executor."
         if model_name.startswith("rule-based"):
             return f"Model '{model_name}' is a heuristic compatibility model, so the executor is using the rule-based fallback path."
         return None

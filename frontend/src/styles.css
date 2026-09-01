@@ -144,6 +144,18 @@ pre {
   background: #fffefb;
 }
 
+.readonly-value {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fffefb;
+  font-weight: 600;
+  min-height: 46px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;
@@ -217,6 +229,196 @@ button:disabled {
   margin-bottom: 16px;
 }
 
+.result-detail {
+  display: grid;
+  gap: 16px;
+}
+
+.result-section {
+  display: grid;
+  gap: 8px;
+}
+
+.result-section h4 {
+  margin: 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-strong);
+}
+
+.result-text {
+  white-space: pre-wrap;
+}
+
+/* 固定高度 + 内部滚动（Current task JSON 滑窗） */
+.scroll-box {
+  height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: #fffefb;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.json-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.pill {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.pill.ok {
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent-strong);
+}
+
+.pill.bad {
+  background: rgba(166, 27, 27, 0.12);
+  color: var(--danger);
+}
+
+.pill.mode {
+  background: rgba(102, 102, 102, 0.14);
+  color: var(--text-secondary, #8a94a6);
+  text-transform: none;
+}
+
+.judge-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.judge-score {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.role-assistant {
+  color: var(--accent-strong);
+}
+
+.role-user {
+  color: #92700a;
+}
+
+.msg-content {
+  margin-top: 4px;
+}
+
+.assertion {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+details.result-section summary {
+  cursor: pointer;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* 工具调用条目：箭头折叠区（▸ 展开转 ▾） */
+.tool-item summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-arrow {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 12px;
+  transition: transform 150ms ease;
+}
+
+.tool-item[open] .tool-arrow {
+  transform: rotate(90deg);
+}
+
+.tool-item .json-label {
+  margin-top: 8px;
+}
+
+.tool-item pre {
+  margin-top: 6px;
+}
+
+/* Stage state 状态着色：边框 + stage 名后小点（在 styles.css 末尾追加） */
+.stage-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* 未进行：灰 */
+.list li.stage-pending { border-color: #9aa0a6; }
+.list li.stage-pending .stage-dot { background-color: #9aa0a6; }
+
+/* 跳过（agent_test 的 LOAD_SKILL 等）：中性蓝灰 */
+.list li.stage-skipped { border-color: #8a94a6; }
+.list li.stage-skipped .stage-dot { background-color: #8a94a6; }
+
+/* 通过：绿 */
+.list li.stage-passed { border-color: #2f9e44; }
+.list li.stage-passed .stage-dot { background-color: #2f9e44; }
+
+/* 失败：红 */
+.list li.stage-failed { border-color: #c92a2a; }
+.list li.stage-failed .stage-dot { background-color: #c92a2a; }
+
+/* 进行中：黄闪烁 */
+.list li.stage-running { animation: stage-blink-border 1.2s ease-in-out infinite; }
+.list li.stage-running .stage-dot { animation: stage-blink-dot 1.2s ease-in-out infinite; }
+
+@keyframes stage-blink-border {
+  0%, 100% { border-color: #e8890c; }
+  50% { border-color: rgba(232, 137, 12, 0.25); }
+}
+
+@keyframes stage-blink-dot {
+  0%, 100% { background-color: #e8890c; }
+  50% { background-color: rgba(232, 137, 12, 0.25); }
+}
+
 @media (max-width: 900px) {
   .hero,
   .meta-grid,
@@ -229,4 +431,383 @@ button:disabled {
   .hero {
     align-items: start;
   }
+}
+
+/* ---- 新建 Scenario 表单 ---- */
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.panel-head h2 {
+  margin: 0;
+}
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--accent-strong);
+}
+
+.btn-outline:hover {
+  background: #eef0eb;
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: #fbeae9;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.pager-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pager-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.pager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pager-info {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.scenario-form {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  background: #fffdf8;
+}
+
+/* 新建场景表单：按钮/输入框收紧，字体与小标题(.form-group h4, 14px)一致 */
+.scenario-form button {
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 10px;
+}
+
+.scenario-form .form-input {
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+
+/* 断言/rubric 行内与数据表内的紧凑按钮，跟随统一字号 */
+.scenario-form .assertion-head .btn-danger,
+.scenario-form .fixture-remove button {
+  font-size: 14px;
+  padding: 4px 10px;
+}
+
+.form-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.form-head h3 {
+  margin: 0;
+}
+
+.form-group {
+  border-top: 1px dashed var(--line);
+  padding: 14px 0 4px;
+  margin-top: 6px;
+}
+
+.form-group h4 {
+  margin: 0 0 12px;
+  color: var(--accent-strong);
+  font-size: 14px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) 1fr;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.form-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.required-star {
+  color: var(--danger);
+}
+
+.field-help {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.form-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fffefb;
+  color: var(--text);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+}
+
+textarea.form-input {
+  resize: vertical;
+}
+
+/* 默认值态：灰底灰字，用户输入后覆盖为白底黑字 */
+.form-input.is-default {
+  color: var(--muted);
+  background: #f2efe8;
+}
+
+.switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.switch-text {
+  font-size: 13px;
+}
+
+.fixture-editor {
+  margin: 4px 0 12px;
+}
+
+.fixture-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 12px;
+  font-size: 13px;
+}
+
+.fixture-table th,
+.fixture-table td {
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.fixture-table .form-input {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.fixture-remove {
+  white-space: nowrap;
+  text-align: center;
+}
+
+.fixture-remove button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* 断言 / rubric 编辑器：卡片式行，头部(类型下拉+删除) + 参数区 */
+.assertion-editor {
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-top: 8px;
+}
+
+.assertion-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.assertion-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fffdf8;
+}
+
+.assertion-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assertion-head select {
+  flex: 1;
+}
+
+.assertion-head .btn-danger {
+  padding: 6px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.assertion-fields {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.assertion-fields .field-row {
+  margin-bottom: 0;
+}
+
+/* 断言参数区：field-row 占满整行（外层 .assertion-fields 是两列 grid，
+   若不跨列会把首字段挤进 140~200px 窄格，导致参考数据集下拉显示不全） */
+.assertion-fields .field-row {
+  grid-column: 1 / -1;
+}
+
+/* 参考数据集下拉：给足最小宽度，完整显示数据集名称/id */
+.assertion-fields select.form-input {
+  min-width: 220px;
+}
+
+@media (max-width: 900px) {
+  .assertion-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.overwrite-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin: 12px 0;
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  background: #fdf3f2;
+}
+
+.overwrite-bar code {
+  font-weight: 700;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.panel-head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.scenario-manager {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  background: #fffdf8;
+}
+
+.manager-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.manager-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.manager-info span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.manager-edit {
+  margin-top: 8px;
+}
+
+.yaml-editor {
+  width: 100%;
+  min-height: 320px;
+  margin-top: 8px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #1a1b1f;
+  color: #e8e6e1;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.yaml-editor:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
 }

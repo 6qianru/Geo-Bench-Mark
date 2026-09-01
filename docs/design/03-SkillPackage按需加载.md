@@ -912,10 +912,9 @@ skill:
   lazy_load_references: true
 
 runtime:
-  executor: langgraph
+  executor: skill
   agent_model: qwen3.5-32b
-  actor_model: qwen3.5-14b
-  judge_model: qwen3.5-32b
+  judge_model: qwen3.5-32b   # v0.5 注：原 actor_model 已废弃，模拟用户由 agent.user_model 配置
   max_turns: 6
   timeout_seconds: 180
 
@@ -957,11 +956,12 @@ mcp:
 user_task: >
   请帮我生成学校周边 500 米的服务范围。
 
-actor:
-  enabled: true
-  profile: normal_user
-  max_turns: 5
-  goal: >
+# v0.5 注：原 actor: 块已废弃，模拟用户设定并入 agent 块（agent.user_enabled/user_goal/...）
+agent:
+  user_enabled: true
+  user_profile: normal_user
+  user_max_turns: 5
+  user_goal: >
     如果智能体询问使用哪个数据，请回答使用 schools 数据。
     如果智能体询问缓冲距离，请回答 500 米。
     如果智能体询问输出格式，请回答 GeoJSON。
@@ -1266,7 +1266,7 @@ Reference Before Tool Compliance
 
 ```text
 Executor
-  ├── LangGraphExecutor
+  ├── SkillExecutor
   ├── NanobotExecutor
   └── AgentXExecutor
 ```

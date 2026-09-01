@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import ScenarioForm from "./ScenarioForm";
+import ScenarioManager from "./ScenarioManager";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+// VITE_API_BASE 为空 → 相对路径，生产走 nginx 同源反代 /api；本地 dev 由 vite server.proxy 转发到后端
+const API_BASE = import.meta.env.VITE_API_BASE || ""; // 要指定独立后端时传 VITE_API_BASE=http://host:8000
 
 async function fetchJson(path, options) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -14,29 +17,219 @@ async function fetchJson(path, options) {
   return response.json();
 }
 
-function prettyEvent(event) {
-  if (!event) return "";
-  const type = event.type || "event";
-  const stage = event.task?.current_stage || event.payload?.stage || "-";
-  const status = event.task?.status || event.payload?.status || "-";
-  const executor = event.task?.run_config?.executor || event.payload?.executor || "-";
-  return `${type} | executor=${executor} | stage=${stage} | status=${status}`;
+const SCENARIOS_PER_PAGE = 7;
+const HISTORY_PER_PAGE = 10;
+
+function Pager({ page, totalPages, onPageChange }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="pager">
+      <button className="pager-btn" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+        ‹ 上一页
+      </button>
+      <span className="pager-info">
+        第 {page} / {totalPages} 页
+      </span>
+      <button className="pager-btn" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+        下一页 ›
+      </button>
+    </div>
+  );
+}
+
+function ResultDetail({ result }) {
+  const fr = result.final_output?.final_response || "";
+  const toolCalls = result.tool_calls || [];
+  const conversation = result.conversation || [];
+  const assertions = result.assertions || [];
+  const errors = result.errors || [];
+  const externalInteractions = result.final_output?.external_interactions || [];
+  const judge = result.judge || {};
+  const hasJudge = typeof judge === "object" && Object.keys(judge).length > 0;
+  const scorePct = judge.score != null ? Math.round(judge.score * 100) : null;
+  // judge_mode 为迭代 2（LLM judge）新增字段；老数据没有时按 reason 反推状态标签
+  const modeLabel = hasJudge
+    ? {
+        llm: "LLM 判定",
+        "rule-skill": "规则判定·skill契约",
+        "rule-agent": "规则判定·宽松",
+        disabled: "已禁用",
+        error: "判定错误",
+      }[judge.judge_mode] ||
+      (typeof judge.reason === "string" && judge.reason.includes("Judge disabled")
+        ? "已禁用"
+        : "规则判定")
+    : "";
+
+  const jsonBlock = (obj) =>
+    obj && typeof obj === "object" ? JSON.stringify(obj, null, 2) : String(obj ?? "");
+
+  return (
+    <div className="result-detail">
+      <div className="result-section">
+        <h4>工具调用</h4>
+        {toolCalls.length === 0 ? (
+          <p className="muted">(无工具调用)</p>
+        ) : (
+          <ul className="list compact">
+            {toolCalls.map((call, index) => (
+              <li key={index}>
+                <details className="tool-item">
+                  <summary>
+                    <span className="tool-arrow">▸</span>
+                    <strong>{call.tool_name}</strong>
+                    <span className={call.status === "success" ? "pill ok" : "pill bad"}>{call.status}</span>
+                  </summary>
+                  <div className="json-label">入参</div>
+                  <pre>{jsonBlock(call.arguments)}</pre>
+                  {call.result ? (
+                    <>
+                      <div className="json-label">出参</div>
+                      <pre>{jsonBlock(call.result)}</pre>
+                    </>
+                  ) : null}
+                </details>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>最终回答</h4>
+        <pre className="result-text">{fr || "(空)"}</pre>
+      </div>
+      <div className="result-section">
+        <h4>判定结果</h4>
+        {!hasJudge ? (
+          <p className="muted">(无 judge 结果)</p>
+        ) : (
+          <>
+            <div className="judge-header">
+              <span className={judge.passed ? "pill ok" : "pill bad"}>
+                {judge.passed ? "passed" : "failed"}
+              </span>
+              {scorePct != null && <span className="judge-score">{scorePct}%</span>}
+              <span className="pill mode">{modeLabel}</span>
+              {judge.model ? <span className="muted">模型: {judge.model}</span> : null}
+            </div>
+            <div className="json-label">原因</div>
+            <pre className="result-text">{judge.reason || ""}</pre>
+            {judge.issues?.length ? (
+              <>
+                <div className="json-label">问题</div>
+                <ul className="list compact">
+                  {judge.issues.map((item, index) => (
+                    <li key={index} className="assertion bad">
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+            {judge.suggestions?.length ? (
+              <>
+                <div className="json-label">建议</div>
+                <ul className="list compact">
+                  {judge.suggestions.map((item, index) => (
+                    <li key={index}>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>完整对话</h4>
+        {conversation.length === 0 ? (
+          <p className="muted">(无对话记录)</p>
+        ) : (
+          <ul className="list compact">
+            {conversation.map((message, index) => (
+              <li key={index}>
+                <strong className={message.role === "assistant" ? "role-assistant" : "role-user"}>
+                  {message.role}
+                </strong>
+                <pre className="msg-content">{jsonBlock(message.content)}</pre>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>外部智能体交互</h4>
+        {externalInteractions.length === 0 ? (
+          <p className="muted">(无外部交互记录)</p>
+        ) : (
+          <ul className="list compact">
+            {externalInteractions.map((interaction, index) => (
+              <li key={index}>
+                <strong className="role-user">指令 {interaction.turn}</strong>
+                <pre className="msg-content">{interaction.instruction || ""}</pre>
+                <strong className="role-assistant">外部回答</strong>
+                <pre className="msg-content">{interaction.response || ""}</pre>
+                {interaction.tool_calls?.length ? (
+                  <p className="muted">
+                    外部工具调用: {interaction.tool_calls.map((call) => call.tool_name).join(", ")}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>断言</h4>
+        {assertions.length === 0 ? (
+          <p className="muted">(无断言)</p>
+        ) : (
+          <ul className="list compact">
+            {assertions.map((item, index) => (
+              <li key={index} className={item.passed ? "assertion ok" : "assertion bad"}>
+                <span className="pill">{item.passed ? "passed" : "failed"}</span>
+                <span>
+                  {item.type}: {item.message}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="result-section">
+        <h4>错误</h4>
+        {errors.length === 0 ? (
+          <p className="muted">(无错误)</p>
+        ) : (
+          errors.map((error, index) => <pre key={index} className="error-box">{error}</pre>)
+        )}
+      </div>
+      <details className="result-section">
+        <summary>原始 JSON</summary>
+        <pre>{JSON.stringify(result, null, 2)}</pre>
+      </details>
+    </div>
+  );
 }
 
 export default function App() {
   const [scenarios, setScenarios] = useState([]);
   const [skills, setSkills] = useState([]);
-  const [executors, setExecutors] = useState([]);
   const [reports, setReports] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [runHistory, setRunHistory] = useState([]); // 来自 DB 的持久化历史（/api/runs）
+  const [historyDbError, setHistoryDbError] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
-  const [selectedExecutor, setSelectedExecutor] = useState("langgraph");
+  const [showForm, setShowForm] = useState(false);
+  const [showManage, setShowManage] = useState(false);
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [validation, setValidation] = useState(null);
   const [tools, setTools] = useState([]);
   const [currentTask, setCurrentTask] = useState(null);
-  const [taskEvents, setTaskEvents] = useState([]);
   const [runResult, setRunResult] = useState(null);
+  const [scenarioPage, setScenarioPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const eventSourceRef = useRef(null);
@@ -50,30 +243,48 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const currentScenario = scenarios.find((scenario) => scenario.path === selectedPath);
-    if (currentScenario?.executor) {
-      setSelectedExecutor(currentScenario.executor);
-    }
-  }, [scenarios, selectedPath]);
-
   async function loadInitial() {
     try {
-      const [scenarioData, skillData, executorData, reportData, taskData] = await Promise.all([
+      const [scenarioData, skillData, reportData, taskData] = await Promise.all([
         fetchJson("/api/scenarios"),
         fetchJson("/api/skills"),
-        fetchJson("/api/executors"),
         fetchJson("/api/reports"),
         fetchJson("/api/tasks"),
       ]);
       setScenarios(scenarioData);
       setSkills(skillData);
-      setExecutors(executorData);
       setReports(reportData);
       setTasks(taskData);
       if (scenarioData.length > 0) {
         setSelectedPath(scenarioData[0].path);
-        setSelectedExecutor(scenarioData[0].executor || "langgraph");
+      }
+      await loadRunHistory();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function loadRunHistory() {
+    try {
+      const data = await fetchJson("/api/runs");
+      if (data.available) {
+        setRunHistory(data.runs);
+        setHistoryDbError("");
+      } else {
+        setRunHistory([]);
+        setHistoryDbError(data.error || "数据库不可用");
+      }
+    } catch (err) {
+      setHistoryDbError(err.message);
+    }
+  }
+
+  async function loadRunDetail(runId) {
+    try {
+      const data = await fetchJson(`/api/runs/${runId}`);
+      // 后端返回 { run_id, scenario_id, json, md, ... }，json 是报告全文 JSON 字符串
+      if (data.json) {
+        setRunResult(JSON.parse(data.json));
       }
     } catch (err) {
       setError(err.message);
@@ -119,14 +330,12 @@ export default function App() {
     setLoading(true);
     setError("");
     setRunResult(null);
-    setTaskEvents([]);
     try {
       const task = await fetchJson("/api/tasks", {
         method: "POST",
         body: JSON.stringify({
           path: selectedPath,
           output_dir: "reports",
-          executor: selectedExecutor,
           memory_enabled: memoryEnabled,
         }),
       });
@@ -153,7 +362,6 @@ export default function App() {
         setCurrentTask(task);
         setTasks((previous) => [task, ...previous.filter((item) => item.task_id !== task.task_id)]);
       }
-      setTaskEvents((previous) => [payload, ...previous].slice(0, 80));
       if (payload.payload?.result) {
         setRunResult(payload.payload.result);
       }
@@ -162,6 +370,7 @@ export default function App() {
           setRunResult(task.result);
         }
         loadReportsOnly();
+        loadRunHistory();
         setLoading(false);
         source.close();
       }
@@ -175,7 +384,6 @@ export default function App() {
     source.addEventListener("executor_session", handleEvent);
     source.addEventListener("stage", handleEvent);
     source.addEventListener("executor_step", handleEvent);
-    source.addEventListener("actor_reply", handleEvent);
     source.addEventListener("agent_result", handleEvent);
     source.addEventListener("assertions", handleEvent);
     source.addEventListener("judge", handleEvent);
@@ -197,7 +405,42 @@ export default function App() {
     }
   }
 
+  async function loadScenariosOnly() {
+    try {
+      const scenarioData = await fetchJson("/api/scenarios");
+      setScenarios(scenarioData);
+      // 保留当前选中；若所选场景已不存在（如覆盖改名）则回退到第一个
+      setSelectedPath((previous) =>
+        scenarioData.some((scenario) => scenario.path === previous)
+          ? previous
+          : scenarioData[0]?.path || "",
+      );
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const currentScenario = scenarios.find((scenario) => scenario.path === selectedPath);
   const stageResults = currentTask?.stage_results || {};
+  // 分页：safePage 防止列表变化后当前页越界（slice 用 safePage，Pager 展示 safePage）
+  const scenarioTotalPages = Math.max(1, Math.ceil(scenarios.length / SCENARIOS_PER_PAGE));
+  const scenarioSafePage = Math.min(scenarioPage, scenarioTotalPages);
+  const scenarioPageItems = scenarios.slice(
+    (scenarioSafePage - 1) * SCENARIOS_PER_PAGE,
+    scenarioSafePage * SCENARIOS_PER_PAGE,
+  );
+  const historyTotalPages = Math.max(1, Math.ceil(runHistory.length / HISTORY_PER_PAGE));
+  const historySafePage = Math.min(historyPage, historyTotalPages);
+  const historyPageItems = runHistory.slice(
+    (historySafePage - 1) * HISTORY_PER_PAGE,
+    historySafePage * HISTORY_PER_PAGE,
+  );
+  // agent_test（评测外部 agent 模式）不做数据准备/MCP 连接/技能装载，隐藏这三个与 agent 无关的阶段
+  const isAgentMode = currentScenario?.type === "agent_test";
+  const AGENT_HIDDEN_STAGES = ["PREPARE_DATA", "CONNECT_MCP", "LOAD_SKILL"];
+  const visibleStages = Object.entries(stageResults).filter(
+    ([stage]) => !(isAgentMode && AGENT_HIDDEN_STAGES.includes(stage)),
+  );
 
   return (
     <div className="app-shell">
@@ -218,7 +461,31 @@ export default function App() {
 
       <main className="layout">
         <section className="panel">
-          <h2>Scenario</h2>
+          <div className="panel-head">
+            <h2>Scenario</h2>
+            <div className="panel-head-actions">
+              <button
+                className="btn-outline"
+                onClick={() => {
+                  setShowForm(false);
+                  setShowManage(true);
+                }}
+              >
+                管理
+              </button>
+              <button
+                className="btn-outline"
+                onClick={() => {
+                  setShowManage(false);
+                  setShowForm(true);
+                }}
+              >
+                新建 Scenario
+              </button>
+            </div>
+          </div>
+          {showManage && <ScenarioManager scenarios={scenarios} onClose={() => setShowManage(false)} onSaved={loadScenariosOnly} />}
+          {showForm && <ScenarioForm onClose={() => setShowForm(false)} onSaved={loadScenariosOnly} />}
           <label className="field">
             <span>Select scenario</span>
             <select value={selectedPath} onChange={(event) => setSelectedPath(event.target.value)}>
@@ -232,13 +499,7 @@ export default function App() {
           <div className="config-grid">
             <label className="field">
               <span>Executor runtime</span>
-              <select value={selectedExecutor} onChange={(event) => setSelectedExecutor(event.target.value)}>
-                {executors.map((executor) => (
-                  <option key={executor.id} value={executor.id}>
-                    {executor.name}
-                  </option>
-                ))}
-              </select>
+              <div className="readonly-value">{currentScenario?.executor || "—"}</div>
             </label>
             <label className="checkbox-field">
               <input
@@ -265,13 +526,14 @@ export default function App() {
             <div>
               <h3>Available scenarios</h3>
               <ul className="list">
-                {scenarios.map((scenario) => (
+                {scenarioPageItems.map((scenario) => (
                   <li key={scenario.path}>
                     <strong>{scenario.name}</strong>
                     <span>{scenario.path}</span>
                   </li>
                 ))}
               </ul>
+              <Pager page={scenarioSafePage} totalPages={scenarioTotalPages} onPageChange={setScenarioPage} />
             </div>
             <div>
               <h3>Available skills</h3>
@@ -292,20 +554,23 @@ export default function App() {
           <div className="result-grid">
             <article>
               <h3>Current task</h3>
-              <pre>{currentTask ? JSON.stringify(currentTask, null, 2) : "No active task."}</pre>
+              <pre className="scroll-box">{currentTask ? JSON.stringify(currentTask, null, 2) : "No active task."}</pre>
             </article>
             <article>
               <h3>Stage state</h3>
               <ul className="list compact">
-                {Object.entries(stageResults).length ? (
-                  Object.entries(stageResults).map(([stage, status]) => (
-                    <li key={stage}>
-                      <strong>{stage}</strong>
+                {visibleStages.length ? (
+                  visibleStages.map(([stage, status]) => (
+                    <li key={stage} className={`stage-${status.toLowerCase()}`}>
+                      <strong>
+                        {stage}
+                        <span className="stage-dot" />
+                      </strong>
                       <span>{status}</span>
                     </li>
                   ))
                 ) : (
-                  <li>
+                  <li className="stage-pending">
                     <strong>No stages yet</strong>
                     <span>Create a task to stream progress.</span>
                   </li>
@@ -330,41 +595,33 @@ export default function App() {
         </section>
 
         <section className="panel">
-          <h2>Live Events</h2>
-          <ul className="list compact">
-            {taskEvents.length ? (
-              taskEvents.map((event, index) => (
-                <li key={`${event.type}-${index}`}>
-                  <strong>{prettyEvent(event)}</strong>
-                  <span>{event.task?.updated_at}</span>
-                </li>
-              ))
-            ) : (
-              <li>
-                <strong>No events yet</strong>
-                <span>SSE updates will appear here.</span>
-              </li>
-            )}
-          </ul>
-        </section>
-
-        <section className="panel">
           <h2>Run Result</h2>
-          <pre>{runResult ? JSON.stringify(runResult, null, 2) : "No run completed yet."}</pre>
+          {runResult ? <ResultDetail result={runResult} /> : "No run completed yet."}
         </section>
 
         <section className="panel">
           <h2>Task History</h2>
-          <ul className="list">
-            {tasks.map((task) => (
-              <li key={task.task_id}>
-                <strong>{task.task_id}</strong>
-                <span>
-                  {task.status} · {task.run_config?.executor || "langgraph"} · {task.current_stage || "no stage yet"}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {historyDbError ? (
+            <pre className="error-box">{historyDbError}</pre>
+          ) : runHistory.length === 0 ? (
+            <p className="muted">No runs recorded yet.</p>
+          ) : (
+            <>
+              <ul className="list">
+                {historyPageItems.map((run) => (
+                  <li key={run.run_id} onClick={() => loadRunDetail(run.run_id)} style={{ cursor: "pointer" }}>
+                    <strong>{run.scenario_name || run.scenario_id}</strong>
+                    <span>
+                      {run.run_id.slice(0, 8)} · <span className={run.status === "passed" ? "pill ok" : "pill bad"}>{run.status}</span> ·{" "}
+                      {run.executor || "—"} · {run.created_at?.slice(0, 19)?.replace("T", " ")}
+                    </span>
+                    <span className="muted">点击查看该次运行报告</span>
+                  </li>
+                ))}
+              </ul>
+              <Pager page={historySafePage} totalPages={historyTotalPages} onPageChange={setHistoryPage} />
+            </>
+          )}
         </section>
 
         <section className="panel">

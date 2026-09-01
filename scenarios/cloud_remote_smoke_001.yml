@@ -1,0 +1,53 @@
+id: cloud_remote_smoke_001
+name: 云端 MCP server 冒烟（预期失败）
+version: 1.0.0
+type: agent_skill_test
+description: >
+  配真实云端 MCP server（SuperMap DataManager，sse 传输）。被测 skill 声明的是
+  本地 mock 工具（query_dataset_metadata/create_buffer 等），云端不提供这些工具 →
+  fail-fast 拦截，评测失败。这是迭代3边界下的预期行为：云端工具与本地 skill 工具集
+  不同，云端场景当前必不过/报错，agent 不启动、不产生云端数据副作用。
+target:
+  skill_id: gis_buffer_analysis
+  skill_version: 1.0.0
+runtime:
+  executor: skill
+  agent_model: deepseek-v4-flash
+  max_turns: 6
+  timeout_seconds: 180
+  memory_enabled: false
+data:
+  fixtures:
+    - id: schools
+      name: 学校点数据
+      path: ../fixtures/schools.geojson
+mcp:
+  servers:
+    - id: cloud_datamanager
+      name: 云端 DataManager MCP 服务
+      transport: sse
+      url: http://192.168.13.130:8490/agentx/workflow/api/gpamcp/vectoranalyst/sse/v2.1
+      required: true
+skill:
+  load_mode: file
+  path: ../skills/gis_buffer_analysis.skill.yml
+  required: true
+user_task: >
+  请帮我生成 schools 数据周边 500 米的服务范围。
+expected_behavior:
+  should_load_skills:
+    - gis_buffer_analysis
+  should_not:
+    - 编造不存在的数据字段
+    - 在缺少输入数据时直接执行
+# 断言为空：fail-fast 在 RUN_AGENT 前拦截，不会走到断言阶段。
+# 预期：LOAD_SKILL PASSED → fail-fast 报「Skill 所需工具在 MCP server 缺失」→ RUN_AGENT FAILED，0 工具调用。
+assertions: []
+judge:
+  enabled: true
+  rubric:
+    - 是否正确识别为缓冲区分析任务
+    - 是否正确调用查询与缓冲工具
+pass_criteria:
+  required_assertions_passed: true
+  judge_score_min: 0.8

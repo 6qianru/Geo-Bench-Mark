@@ -1,0 +1,12 @@
+# mock 外部智能体服务（examples/agent_external/agent_server.py）
+# 仅用标准库 http.server，无需第三方依赖。python:3.11-slim 基础镜像足矣。
+# 作用：离线复现 SuperMap Workflow Studio 的 Run Flow API（SSE/JSON），
+# 用于 docker compose --profile mock 下离线验证 agent_test / external_driven 场景。
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY agent_server.py /app/agent_server.py
+
+EXPOSE 8901
+# agent_server.py 默认 127.0.0.1:8901；--host 0.0.0.0 让 compose 同网络可访问（服务名 mock-agent:8901）
+CMD ["python", "agent_server.py", "--host", "0.0.0.0", "--port", "8901"]

@@ -1,0 +1,42 @@
+id: agent_orchestrated_actor_multi_turn
+name: 外部智能体-多轮指挥-与actor自动多轮
+version: "1.0.0"
+type: agent_test
+description: "orchestrator + actor 自动多轮：本地 agent 缺信息时按 [NEED_INTERACTION] 协议追问，模拟用户 actor 按 actor.goal 回答，agent 拿答案后继续指挥直到 [FINAL]"
+target: {}
+runtime:
+  executor: orchestrator
+  agent_model: deepseek-v4-flash   # orchestrator 需要真实本地模型（models.yaml 别名），无启发式兜底
+  max_turns: 5                  # 最多向外部 agent 发送的指令数
+agent:
+  type: http
+  endpoint: http://192.168.168.20:8490/agentx/workflowstudio/api/v1/run/ec8e428b-59a8-4d85-b2f8-9e5147dc5921
+  query_params:
+    stream: "true"
+  stream_response: true
+  body:
+    input_type: chat
+    output_type: chat
+  ask_user: true                # 本地 agent 缺信息时允许向用户追问；默认 false=不追问（存量行为）
+  description: 能对 GIS 数据集执行查询、叠加求交、缓冲区等空间分析的智能体，可能需要用户补充数据集与范围信息
+  # 模拟用户设定（反问闭环）：agent 输出 [NEED_INTERACTION] 时，UserSimulator 按 user_goal 回答
+  user_enabled: true
+  user_profile: normal_user
+  user_max_turns: 3             # agent↔模拟用户最多往返轮次
+  user_goal: 无  # 模拟用户的目标/已知信息，回答追问时从中提取
+  user_model: rule-based-user
+data: {}
+mcp:
+  servers: []
+  tools:
+    required: []
+    optional: []
+user_task: 先问你好，然后等待回复，再根据回复，随机选择，并等待回复
+assertions:
+  - type: final_response_contains
+    value: "完成"
+judge:
+  enabled: true
+pass_criteria:
+  required_assertions_passed: true
+  judge_score_min: 0.8

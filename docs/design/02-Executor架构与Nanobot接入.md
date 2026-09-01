@@ -1,8 +1,12 @@
-# GeoSkillBench Executor 与 Nanobot 接入补充设计文档
+# GeoSkillBench Executor 架构与 Nanobot 接入
 
-版本：v0.1  
+版本：v0.2（2026-08-24 修订）  
 性质：主系统设计文档的附加说明  
 适用范围：补充说明 GeoSkillBench 中 Executor 的定位，以及 nanobot 是否可以作为 Executor 接入
+
+> **现状（2026-08 修订）**：
+> 1. §9 写于设计期，推演的是"Test Runner 控制 actor 多轮"。最终实现走了另一条路——**反问闭环下沉到各 executor 内部**（executor 内部调用 `UserSimulator`），runner 不再有 actor 循环，仅保留 `need_interaction` 信号供前端展示。该节保留为当时的设计推演，不代表当前代码结构。
+> 2. 当前 executor 注册表为 5 种：`skill` / `orchestrator` / `external_driven` / `http_agent` / `nanobot`（见 `executors/factory.py`），比本文写作时多了 orchestrator 与 external_driven。
 
 ---
 
@@ -46,7 +50,7 @@ Executor 是整个测试系统中的“执行者”。它负责加载被测 Agen
 3. Executor 与 Test Runner / Actor / Judge / Assertion 的关系
 4. 推荐的 Executor 接口设计
 5. NanobotExecutor 的接入方式
-6. LangGraphExecutor 与 NanobotExecutor 的区别
+6. SkillExecutor 与 NanobotExecutor 的区别
 ```
 
 ---
@@ -103,7 +107,7 @@ GeoSkillBench Test Runner
 ├── Skill Loader
 │
 ├── Executor
-│   ├── LangGraphExecutor
+│   ├── SkillExecutor
 │   ├── NanobotExecutor
 │   ├── AgentXExecutor
 │   └── CustomExecutor
@@ -281,7 +285,7 @@ Tool Call 记录必须能被 GeoSkillBench 捕获。
 
 ```text
 Executor
-  ├── LangGraphExecutor
+  ├── SkillExecutor
   ├── NanobotExecutor
   ├── AgentXExecutor
   └── CustomExecutor
@@ -411,7 +415,9 @@ class ExecutorStepResult(BaseModel):
 
 ## 9. Test Runner 如何控制 Executor 与 Actor
 
-推荐由 Test Runner 控制多轮循环，而不是让 Executor 完全内部自循环。
+> **现状（2026-08 修订）**：本节为设计期推演，最终实现反问闭环在 executor 内部完成，runner 无 actor 循环（见文首修订说明）。
+
+~~推荐由 Test Runner 控制多轮循环，而不是让 Executor 完全内部自循环。~~
 
 ### 9.1 推荐流程
 
@@ -429,7 +435,7 @@ Executor 返回 response
   - need_interaction = true：调用 Actor
   - error：记录失败
   ↓
-ActorRuntime.reply(...)
+UserSimulator.reply(...)
   ↓
 send_message(actor_reply)
   ↓
@@ -450,7 +456,7 @@ async def run_agent_with_actor(
     test_context,
     skill,
     executor,
-    actor_runtime,
+    user_simulator,
     recorder,
 ):
     session = await executor.create_session(
@@ -484,7 +490,7 @@ async def run_agent_with_actor(
             break
 
         if step_result.need_interaction:
-            actor_reply = await actor_runtime.reply(
+            actor_reply = await user_simulator.reply(
                 scenario=scenario,
                 conversation=recorder.conversation,
                 test_context=test_context,
@@ -510,7 +516,7 @@ async def run_agent_with_actor(
 3. 每一轮的输入输出都可以被记录。
 4. 失败和超时更好处理。
 5. 不同 Executor 的行为更容易统一。
-6. 后续支持 LangGraphExecutor / AgentXExecutor 更方便。
+6. 后续支持 SkillExecutor / AgentXExecutor 更方便。
 ```
 
 如果让 nanobot 一次性完成完整任务，会出现：
@@ -728,7 +734,7 @@ Scenario 或 RunConfig 中可以增加：
 
 ```yaml
 runtime:
-  executor: langgraph
+  executor: skill
 ```
 
 或：
@@ -744,8 +750,7 @@ runtime:
 runtime:
   executor: nanobot
   agent_model: qwen3.5-32b
-  actor_model: qwen3.5-14b
-  judge_model: qwen3.5-32b
+  judge_model: qwen3.5-32b   # v0.5 注：原 actor_model 已废弃，模拟用户由 agent.user_model 配置
   max_turns: 6
   timeout_seconds: 180
 ```
@@ -759,7 +764,7 @@ runtime:
     "agent": {
       "model": "qwen3.5-32b"
     },
-    "actor": {
+    "user": {
       "model": "qwen3.5-14b"
     },
     "judge": {
@@ -768,6 +773,8 @@ runtime:
   }
 }
 ```
+
+> v0.5 注：以上 role_models 中原 `actor` 角色已改名 `user`；模拟用户实际由 scenario `agent.user_model` 配置，前端角色选择器不再有独立 actor 项。
 
 ---
 
@@ -855,9 +862,9 @@ errors
 
 ---
 
-## 18. LangGraphExecutor 与 NanobotExecutor 对比
+## 18. SkillExecutor 与 NanobotExecutor 对比
 
-| 项目 | LangGraphExecutor | NanobotExecutor |
+| 项目 | SkillExecutor | NanobotExecutor |
 |---|---|---|
 | 控制力 | 高 | 取决于 nanobot 暴露能力 |
 | 状态机编排 | 强 | 需要适配 |
@@ -878,7 +885,7 @@ errors
 优先实现：
 
 ```text
-LangGraphExecutor
+SkillExecutor
 ```
 
 原因：
@@ -931,7 +938,7 @@ Tool-level assertions may be limited in NanobotExecutor mode.
 ```text
 GeoSkillBench Core 独立实现
 Executor 可插拔
-LangGraphExecutor 作为默认
+SkillExecutor 作为默认
 NanobotExecutor 作为可选
 ```
 
@@ -955,7 +962,7 @@ Executor
 
 ```text
 Executor Interface
-  ├── LangGraphExecutor
+  ├── SkillExecutor
   ├── NanobotExecutor
   ├── AgentXExecutor
   └── CustomExecutor
@@ -965,7 +972,7 @@ Executor Interface
 
 ```yaml
 runtime:
-  executor: langgraph
+  executor: skill
 ```
 
 或者：

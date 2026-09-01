@@ -11,6 +11,7 @@ from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
 from geoskillbench.models.result import ExecutorSession, ExecutorSessionRequest, ExecutorStepResult
 from geoskillbench.models.result import ToolCallRecord
 from geoskillbench.models.skill import AgentSkill
+from geoskillbench.runtime.user_simulator import UserSimulator
 from geoskillbench.skills.reference_tool import SkillReferenceTool
 
 
@@ -29,12 +30,14 @@ class HeuristicSessionState:
     latest_metadata: dict[str, Any] | None = None
     finished: bool = False
     final_response: str = ""
+    # 反问闭环（下沉）：缺数据集/距离时问模拟用户，解析其回答填入 resolved_*，不再返回 need_interaction
+    user_simulator: UserSimulator | None = None
 
 
 class HeuristicSessionExecutor(Executor):
-    executor_type = "langgraph"
+    executor_type = "skill"
 
-    def __init__(self, adapter: MCPToolAdapter, executor_type: str = "langgraph", compatibility_note: str | None = None) -> None:
+    def __init__(self, adapter: MCPToolAdapter, executor_type: str = "skill", compatibility_note: str | None = None) -> None:
         self.adapter = adapter
         self.executor_type = executor_type
         self.compatibility_note = compatibility_note
@@ -44,7 +47,22 @@ class HeuristicSessionExecutor(Executor):
         session_id = uuid4().hex
         skill = AgentSkill.model_validate(request.test_context["skill"])
         reference_tool = SkillReferenceTool(skill, request.test_context["_recorder"]) if skill.type == "prompt_skill_package" else None
-        self.sessions[session_id] = HeuristicSessionState(request=request, skill=skill, reference_tool=reference_tool)
+        # 反问闭环：skill 降级到启发式时也内置模拟用户，缺信息内部闭环，不依赖 runner
+        user_cfg = request.role_model_config.get("user") or {}
+        user_simulator = None
+        if user_cfg.get("user_enabled", True):
+            user_simulator = UserSimulator(
+                goal=str(user_cfg.get("user_goal") or ""),
+                profile=str(user_cfg.get("user_profile") or "normal_user"),
+                model=str(user_cfg.get("user_model") or "rule-based-user"),
+                datasets=request.test_context.get("datasets", {}),
+            )
+        self.sessions[session_id] = HeuristicSessionState(
+            request=request,
+            skill=skill,
+            reference_tool=reference_tool,
+            user_simulator=user_simulator,
+        )
         return ExecutorSession(
             session_id=session_id,
             executor_type=self.executor_type,
@@ -61,17 +79,41 @@ class HeuristicSessionExecutor(Executor):
         datasets = state.request.test_context.get("datasets", {})
         if state.resolved_dataset is None:
             state.resolved_dataset = self._infer_dataset_alias(message, datasets)
+            if state.resolved_dataset is None and state.user_simulator is not None:
+                # 反问闭环：问模拟用户并解析回答；解析不到再取第一个数据集兜底
+                state.conversation.append({"role": "assistant", "content": "[NEED_INTERACTION]\n请确认要使用哪个数据集。"})
+                reply = state.user_simulator.reply("请确认要使用哪个数据集。")
+                state.conversation.append({"role": "user", "content": reply})
+                state.resolved_dataset = self._infer_dataset_alias(reply, datasets)
+                if state.resolved_dataset is None and datasets:
+                    state.resolved_dataset = next(iter(datasets.keys()))
             if state.resolved_dataset is None:
                 response = "[NEED_INTERACTION]\n请确认要使用哪个数据集。"
                 state.conversation.append({"role": "assistant", "content": response})
-                return ExecutorStepResult(response=response, need_interaction=True, finished=False)
+                return ExecutorStepResult(
+                    response=response,
+                    need_interaction=True,
+                    finished=False,
+                    conversation=list(state.conversation),
+                )
 
         if state.resolved_distance is None:
             state.resolved_distance = self._infer_distance(message)
+            if state.resolved_distance is None and state.user_simulator is not None:
+                # 反问闭环：问模拟用户并解析"多少米"；规则回答必有数字，100% 可解析
+                state.conversation.append({"role": "assistant", "content": "[NEED_INTERACTION]\n请确认缓冲距离是多少米。"})
+                reply = state.user_simulator.reply("请确认缓冲距离是多少米。")
+                state.conversation.append({"role": "user", "content": reply})
+                state.resolved_distance = self._infer_distance(reply)
             if state.resolved_distance is None:
                 response = "[NEED_INTERACTION]\n请确认缓冲距离是多少米。"
                 state.conversation.append({"role": "assistant", "content": response})
-                return ExecutorStepResult(response=response, need_interaction=True, finished=False)
+                return ExecutorStepResult(
+                    response=response,
+                    need_interaction=True,
+                    finished=False,
+                    conversation=list(state.conversation),
+                )
 
         if state.latest_metadata is None:
             internal_calls.extend(self._load_required_references(state, ["plan", "data", "metadata"]))
@@ -81,7 +123,13 @@ class HeuristicSessionExecutor(Executor):
             if metadata_call.status != "success":
                 response = f"数据元信息查询失败：{metadata_call.error_message or 'unknown error'}"
                 state.conversation.append({"role": "assistant", "content": response})
-                return ExecutorStepResult(response=response, finished=True, tool_calls=tool_calls, error_message=metadata_call.error_message)
+                return ExecutorStepResult(
+                    response=response,
+                    finished=True,
+                    tool_calls=tool_calls,
+                    error_message=metadata_call.error_message,
+                    conversation=list(state.conversation),
+                )
         else:
             tool_calls = internal_calls
 
@@ -112,7 +160,13 @@ class HeuristicSessionExecutor(Executor):
         if buffer_call.status != "success":
             response = f"缓冲区分析失败：{buffer_call.error_message or 'unknown error'}"
             state.conversation.append({"role": "assistant", "content": response})
-            return ExecutorStepResult(response=response, finished=True, tool_calls=tool_calls, error_message=buffer_call.error_message)
+            return ExecutorStepResult(
+                response=response,
+                finished=True,
+                tool_calls=tool_calls,
+                error_message=buffer_call.error_message,
+                conversation=list(state.conversation),
+            )
 
         prefix = "[FINAL]\n"
         response = (
@@ -125,7 +179,14 @@ class HeuristicSessionExecutor(Executor):
         state.final_response = response
         state.finished = True
         state.conversation.append({"role": "assistant", "content": response})
-        return ExecutorStepResult(response=response, need_interaction=False, finished=True, tool_calls=tool_calls, artifacts=artifacts)
+        return ExecutorStepResult(
+            response=response,
+            need_interaction=False,
+            finished=True,
+            tool_calls=tool_calls,
+            artifacts=artifacts,
+            conversation=list(state.conversation),
+        )
 
     def close_session(self, session_id: str) -> None:
         self.sessions.pop(session_id, None)

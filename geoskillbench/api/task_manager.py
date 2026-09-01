@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from geoskillbench.runner import STAGES, TestRunner
+from geoskillbench.security.redaction import redact
 
 
 def utc_now() -> str:
@@ -33,6 +34,7 @@ class TaskState:
     def snapshot(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "run_id": self.task_id,
             "scenario_path": self.scenario_path,
             "output_dir": self.output_dir,
             "run_config": dict(self.run_config),
@@ -91,12 +93,12 @@ class TaskManager:
             loop.call_soon_threadsafe(asyncio.create_task, self._handle_runner_event(task.task_id, event))
 
         try:
-            result = await asyncio.to_thread(TestRunner().run, task.scenario_path, task.output_dir, emit, task.run_config)
-            task.status = "completed" if result.status == "passed" else "failed"
-            task.result = result.model_dump()
+            result = await asyncio.to_thread(TestRunner().run, task.scenario_path, task.output_dir, emit, task.run_config, task.task_id)
+            task.status = "completed"
+            task.result = redact(result.model_dump())
             task.updated_at = utc_now()
             if result.status != "passed":
-                task.error = "; ".join(result.errors) if result.errors else "Task failed."
+                task.error = "; ".join(result.errors) if result.errors else f"Evaluation: {result.evaluation_verdict}"
             await self._push_event(task, {"type": "task_finished", "task": task.snapshot()})
         except Exception as exc:
             task.status = "failed"
@@ -115,7 +117,7 @@ class TaskManager:
             task.error = event.get("message")
         if event.get("type") == "result":
             task.result = event.get("result")
-        await self._push_event(task, {"type": event.get("type", "event"), "task": task.snapshot(), "payload": event})
+        await self._push_event(task, redact({"type": event.get("type", "event"), "task": task.snapshot(), "payload": event}))
 
     async def _push_event(self, task: TaskState, event: dict[str, Any]) -> None:
         async with task.condition:

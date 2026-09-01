@@ -20,6 +20,7 @@ class ExecutionRecorder:
         self.tool_calls: list[ToolCallRecord] = []
         self.final_output: dict[str, Any] = {}
         self.errors: list[str] = []
+        self.external_interactions: list[dict[str, Any]] = []  # orchestrator 模式下与外部 agent 的每轮指令/回答
         self._event_order = 0
 
     def record_skill_load(self, skill_id: str) -> None:
@@ -47,6 +48,9 @@ class ExecutionRecorder:
                 order=self._event_order,
             )
         )
+
+    def record_external_interaction(self, interaction: dict[str, Any]) -> None:
+        self.external_interactions.append(interaction)
 
     def record_final_output(self, final_output: dict[str, Any]) -> None:
         self.final_output = final_output

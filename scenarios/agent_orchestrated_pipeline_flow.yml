@@ -1,0 +1,36 @@
+id: agent_orchestrated_pipeline_flow
+name: 外部智能体-多轮指挥pipeline-sqlQBQP
+version: "1.0.0"
+type: agent_test
+description: "orchestrator 自定义示例流程 pipeline（plan→compose→ask→analyze）多轮指挥外部智能体完成求交任务；想试最小骨架可把 flow 改成 keyword"
+target: {}
+runtime:
+  executor: orchestrator
+  agent_model: deepseek-v4-flash   # orchestrator 需要真实本地模型（models.yaml 别名），无启发式兜底
+  max_turns: 5                  # 最多向外部 agent 发送的指令数（流程内规则硬判路由）
+agent:
+  type: http
+  endpoint: http://192.168.13.130:8490/agentx/workflowstudio/api/v1/run/88b42c2e-4d35-4d2b-91ae-5f941c202040
+  query_params:
+    stream: "true"
+  stream_response: true
+  body:
+    input_type: chat
+    output_type: chat
+  flow: pipeline                # 自定义示例流程（geoskillbench/executors/example_flows.py）；也可改 keyword
+  description: 能对 GIS 数据集执行查询、叠加求交等空间分析的智能体，可能需要用户补充数据集与范围信息
+data: {}
+mcp:
+  servers: []
+  tools:
+    required: []
+    optional: []
+user_task: 对北京市与中心城区求交
+assertions:
+  - type: final_response_contains
+    value: "完成"
+judge:
+  enabled: true
+pass_criteria:
+  required_assertions_passed: true
+  judge_score_min: 0.8

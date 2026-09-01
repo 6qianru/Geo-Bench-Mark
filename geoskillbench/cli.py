@@ -35,7 +35,9 @@ def main() -> None:
     if args.command == "run":
         path = Path(args.path)
         if path.is_dir():
-            results = [runner.run(str(file_path), args.output).model_dump() for file_path in sorted(path.rglob("*.yml"))]
+            results = []
+            for file_path in sorted(path.rglob("*.yml")) + sorted(path.rglob("*.yaml")):
+                results.append(TestRunner().run(str(file_path), args.output).model_dump())
             print(json.dumps(results, ensure_ascii=False, indent=2))
             return
         result = runner.run(args.path, args.output)

@@ -28,7 +28,7 @@ class SkillReferenceTool:
 
     def safe_resolve_reference(self, relative_path: str) -> Path:
         target = (self.base_dir / relative_path).resolve()
-        if not str(target).startswith(str(self.base_dir)):
+        if not target.is_relative_to(self.base_dir):
             raise ValueError("Invalid reference path")
         if target.suffix.lower() not in ALLOWED_REFERENCE_EXTENSIONS:
             raise ValueError("Unsupported reference file type")

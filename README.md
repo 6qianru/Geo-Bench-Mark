@@ -1,6 +1,6 @@
 # GeoSkillBench (地理空间智能体与 Skill 自动化评测平台)
 
-> **版本**：`v0.1.6` | **状态**：`WIP (Work In Progress)`
+> **版本**：`v0.0.6` | **状态**：`WIP (Work In Progress)`
 > 
 > *注：本项目当前正处于持续迭代与完善中。*
 

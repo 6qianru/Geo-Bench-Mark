@@ -4,6 +4,8 @@
 - DATABASE_URL 非空（服务器部署）→ 用 PostGIS / PostgreSQL：
       DATABASE_URL=postgresql+psycopg://user:pass@host:5432/dbname
   同一份代码，通过 .env 切换，结构不变。
+- 网络库连接超时 3 秒（connect_timeout）。库不可达时由 /api/runs 等接口按设计降级，
+  避免等操作系统 TCP 超时把前端代理拖成 500。
 
 表结构：
 1. reports 表：存单次评测报告的 JSON + Markdown 全文及摘要。
@@ -25,6 +27,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 load_dotenv()
 
 DEFAULT_DATABASE_URL = "sqlite:///./reports.db"  # 本地开发兜底，不依赖服务器
+DB_CONNECT_TIMEOUT_SECONDS = 3
 
 
 class Base(DeclarativeBase):
@@ -64,10 +67,15 @@ def _database_url() -> str:
     return url or DEFAULT_DATABASE_URL
 
 
+def _connect_args(url: str) -> dict:
+    if url.startswith("sqlite"):
+        return {"check_same_thread": False}
+    return {"connect_timeout": DB_CONNECT_TIMEOUT_SECONDS}
+
+
 def _engine():
     url = _database_url()
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=connect_args, pool_pre_ping=True)
+    return create_engine(url, connect_args=_connect_args(url), pool_pre_ping=True)
 
 
 _engine_instance = None

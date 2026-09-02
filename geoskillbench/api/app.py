@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,6 +8,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from typing import Any
+
 from pydantic import BaseModel, ValidationError
 import yaml
 
@@ -640,3 +643,58 @@ async def stream_batch_events(batch_id: str):
         raise HTTPException(status_code=404, detail=f"Batch task not found or already archived: {batch_id}")
     return StreamingResponse(task_manager.batch_event_stream(batch_id), media_type="text/event-stream")
 
+
+# ---------- Batch AI Analyst 端点 ----------
+
+def _write_diagnostics_file(batch_id: str, diagnostics: Any) -> Path:
+    batch_dir = REPORTS_DIR / "batches" / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    diag_file = batch_dir / "ai_diagnostics.json"
+    payload = diagnostics.model_dump() if hasattr(diagnostics, "model_dump") else diagnostics
+    diag_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return diag_file
+
+
+@app.post("/api/batches/{batch_id}/analyze")
+def analyze_batch(batch_id: str, model: str | None = None) -> dict:
+    """手动触发批次横向 AI 诊断。辅助分析，不改变正式 verdict。重复调用覆盖写盘。"""
+    from geoskillbench.models.batch import BatchResult
+    from geoskillbench.runtime.batch_analyst import run_batch_ai_analyst
+
+    task = task_manager.get_batch_task(batch_id)
+    if task is not None and task.status in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail=f"Batch {batch_id} is still {task.status}")
+
+    batch_dir = REPORTS_DIR / "batches" / batch_id
+    summary_file = batch_dir / "summary.json"
+    if not summary_file.exists():
+        raise HTTPException(status_code=404, detail=f"Batch {batch_id} summary not found")
+
+    try:
+        raw_data = json.loads(summary_file.read_text(encoding="utf-8"))
+        batch_result = BatchResult.model_validate(raw_data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read batch summary: {exc}") from exc
+
+    diagnostics = run_batch_ai_analyst(
+        batch_result,
+        model=model,
+        reports_dir=REPORTS_DIR,
+        root_dir=ROOT_DIR,
+    )
+    _write_diagnostics_file(batch_id, diagnostics)
+    if diagnostics.source == "unavailable":
+        raise HTTPException(status_code=502, detail=diagnostics.model_dump())
+    return diagnostics.model_dump()
+
+
+@app.get("/api/batches/{batch_id}/diagnostics")
+def get_batch_diagnostics(batch_id: str) -> dict:
+    """获取指定批次的 AI 诊断结果。尚未分析时 404。"""
+    diag_file = REPORTS_DIR / "batches" / batch_id / "ai_diagnostics.json"
+    if not diag_file.exists():
+        raise HTTPException(status_code=404, detail=f"Diagnostics not found for batch {batch_id}")
+    try:
+        return json.loads(diag_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read diagnostics: {exc}") from exc

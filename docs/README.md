@@ -19,6 +19,7 @@
 | [design/02-Executor架构与Nanobot接入.md](design/02-Executor架构与Nanobot接入.md) | Executor 定位、会话接口抽象、与 Runner/Judge/Assertion 的边界、nanobot 接入分析 |
 | [design/03-SkillPackage按需加载.md](design/03-SkillPackage按需加载.md) | Skill 包目录规范、`load_skill_reference` 工具、相关断言与 API |
 | [design/04-MCP服务化数据协议.md](design/04-MCP服务化数据协议.md) | 5B 网络 MCP、opaque handle、run 控制面、evaluation 与清理协议 |
+| [design/05-批次AI诊断.md](design/05-批次AI诊断.md) | 迭代 6.1 横向 AI 诊断：归因枚举、Patch 门控、analyze/diagnostics API、前端 Batch 面板 |
 
 ### 操作指南
 
@@ -60,6 +61,7 @@ MVP 闭环 → 阶段1 外部智能体黑盒接入 → 阶段2 报告 DB 持久�
 | 迭代 5A | [迭代5A-可信评测基线.md](plan/迭代5A-可信评测基线.md)（已完成） | [迭代5A复盘.md](retrospective/迭代5A复盘.md) |
 | 迭代 5B | [迭代5B-MCP全面服务化与DB数据面.md](plan/迭代5B-MCP全面服务化与DB数据面.md)（平台侧完成，待真机联调） | [迭代5B复盘.md](retrospective/迭代5B复盘.md) |
 | 迭代 6 | [迭代6-批量重复运行与评测标定.md](plan/迭代6-批量重复运行与评测标定.md)（已完成） | [迭代6复盘.md](retrospective/迭代6复盘.md) |
+| 迭代 6.1 | [迭代6.1-多维度AI诊断与标定引擎.md](plan/迭代6.1-多维度AI诊断与标定引擎.md)（进行中） | — |
 
 > 编号说明：云端 MCP 接入立项时曾称"迭代 3"，因与已有的"迭代 3（模拟用户 actor 多轮）"冲突，整理文档时重编号为迭代 4。
 

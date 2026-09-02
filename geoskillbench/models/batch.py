@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from geoskillbench.models.result import EvaluationVerdict, OperationalStatus, TestResult
 
@@ -99,6 +99,48 @@ class BatchResult(BaseModel):
     request: BatchRequest
     summary: BatchSummary
     runs: list[BatchRunRecord] = Field(default_factory=list)
+
+
+ATTRIBUTION_CATEGORIES: tuple[str, ...] = (
+    "skill_prompt_issue",
+    "agent_drift",
+    "env_error",
+    "assertion_or_scenario",
+    "harness_variance",
+    "unknown",
+)
+
+DiagnosticsSource = Literal["llm", "unavailable"]
+SKILL_PATCH_THRESHOLD = 0.4
+
+
+class SkillPatchSuggestion(BaseModel):
+    """Skill Prompt 修复建议。仅供人工复制，平台不得写回 skills/。"""
+    skill_id: str
+    target_file: str
+    diff_content: str
+    explanation: str
+
+
+class BatchAIDiagnostics(BaseModel):
+    """批次横向 AI 诊断。辅助分析，不影响正式 verdict / pass_rate。"""
+    batch_id: str
+    created_at: str
+    source: DiagnosticsSource = "llm"
+    model: str = ""
+    summary_text: str = ""
+    attribution_breakdown: dict[str, float] = Field(default_factory=dict)
+    root_cause_analysis: str = ""
+    suggested_patch: SkillPatchSuggestion | None = None
+    error: str | None = None
+
+    @field_validator("attribution_breakdown")
+    @classmethod
+    def _known_categories(cls, value: dict[str, float]) -> dict[str, float]:
+        unknown_keys = [key for key in value if key not in ATTRIBUTION_CATEGORIES]
+        if unknown_keys:
+            raise ValueError(f"未知归因类别: {unknown_keys}")
+        return value
 
 
 def _compute_distribution(values: list[float | int]) -> DistributionStats:

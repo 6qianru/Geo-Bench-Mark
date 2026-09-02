@@ -166,5 +166,7 @@ pytest
 | `GET` | `/api/batches` | 获取批次历史列表与统计摘要 |
 | `GET` | `/api/batches/{batch_id}` | 获取指定批次的完整统计与方差数据 |
 | `GET` | `/api/batches/{batch_id}/events` | SSE 实时订阅批次评测整体进度 |
+| `POST` | `/api/batches/{batch_id}/analyze` | 手动触发批次横向 AI 诊断（辅助分析，不改正式 verdict） |
+| `GET` | `/api/batches/{batch_id}/diagnostics` | 读取已落盘的批次 AI 诊断；未分析返回 404 |
 | `GET` | `/api/reports` | 列出本地文件系统上的所有运行报告 |
 | `GET` | `/api/runs` | 查询数据库中的历史运行与评分明细 |

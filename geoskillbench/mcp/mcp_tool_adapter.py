@@ -236,6 +236,15 @@ class MCPToolAdapter:
         """评测引擎读取真实结果用；不进入 Agent 可见结果或报告。"""
         return self._result_locations.get(alias)
 
+    def register_result_payload(self, result: dict[str, Any]) -> dict[str, Any]:
+        """登记工具产出（MCP 或外部 agent tool_event）。非 GIS 结果原样返回。"""
+        if not isinstance(result, dict):
+            return result
+        try:
+            return self._register_generated_dataset(result)
+        except ValueError:
+            return result
+
     # ---------- 工具调用 ----------
 
     def invoke(self, tool_name: str, arguments: dict[str, Any]) -> ToolCallRecord:

@@ -13,12 +13,19 @@ _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class PostgisResultComparator:
-    """在 PostGIS 内比较 result/reference，断言只保留指标，不拉几何。"""
+    """在 PostGIS 内比较 result/reference，断言只保留指标，不拉几何。
 
-    def __init__(self, db_url: str, schema: str = "public") -> None:
-        if not db_url.strip():
-            raise ValueError("evaluation database URL is empty")
-        self._engine = create_engine(db_url.strip(), pool_pre_ping=True)
+    几何指标对整表 ST_Union 后投到参考中心点 UTM 带（米制），与文件后端并集语义对齐。
+    不按 smid 取单行，也不复制文件后端的 centroid 最近邻切分。
+    """
+
+    def __init__(self, db_url: str = "", schema: str = "public", *, engine: Any | None = None) -> None:
+        if engine is not None:
+            self._engine = engine
+        else:
+            if not db_url.strip():
+                raise ValueError("evaluation database URL is empty")
+            self._engine = create_engine(db_url.strip(), pool_pre_ping=True)
         self._schema = _quote_ident(schema)
 
     @classmethod
@@ -43,14 +50,21 @@ class PostgisResultComparator:
     ) -> CompareResult:
         result_table = _quote_ident(result_table)
         reference_table = _quote_ident(reference_table)
-        if metric == "feature_count":
-            return self._feature_count(result_table, params)
-        if metric == "overlap_ratio":
-            return self._overlap_ratio(result_table, reference_table, params)
-        if metric == "area_error":
-            return self._area_error(result_table, reference_table, params)
-        if metric == "hausdorff_distance":
-            return self._hausdorff(result_table, reference_table, params)
+        try:
+            if metric == "feature_count":
+                return self._feature_count(result_table, params)
+            if metric == "overlap_ratio":
+                return self._overlap_ratio(result_table, reference_table, params)
+            if metric == "area_error":
+                return self._area_error(result_table, reference_table, params)
+            if metric == "hausdorff_distance":
+                return self._hausdorff(result_table, reference_table, params)
+            if metric == "fields":
+                return self._fields(result_table, reference_table, params)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"in-db {metric} comparison failed") from exc
         return CompareResult(False, None, None, f"Unsupported in-db comparison metric: {metric}")
 
     def _feature_count(self, result_table: str, params: dict[str, Any]) -> CompareResult:
@@ -61,19 +75,14 @@ class PostgisResultComparator:
 
     def _overlap_ratio(self, result_table: str, reference_table: str, params: dict[str, Any]) -> CompareResult:
         min_ratio = float(params.get("min", 1.0))
-        result_geom = self._geometry_column(result_table)
-        reference_geom = self._geometry_column(reference_table)
-        row = self._first(
-            f"""
-            SELECT
-              ST_Area(ST_Intersection(r.{result_geom}, e.{reference_geom})) AS inter_area,
-              ST_Area(e.{reference_geom}) AS ref_area
-            FROM {self._schema}.{result_table} r
-            INNER JOIN {self._schema}.{reference_table} e
-              ON r.smid = e.smid
-            LIMIT 1
+        row = self._first(self._utm_metric_sql(
+            result_table,
+            reference_table,
             """
-        )
+              ST_Area(ST_Intersection(res_m.g, ref_m.g)) AS inter_area,
+              ST_Area(ref_m.g) AS ref_area
+            """,
+        ))
         inter_area = float(row["inter_area"] or 0) if row else 0.0
         ref_area = float(row["ref_area"] or 0) if row else 0.0
         if ref_area == 0:
@@ -84,20 +93,17 @@ class PostgisResultComparator:
 
     def _area_error(self, result_table: str, reference_table: str, params: dict[str, Any]) -> CompareResult:
         max_ratio = float(params.get("max_ratio", 0.05))
-        result_geom = self._geometry_column(result_table)
-        reference_geom = self._geometry_column(reference_table)
-        row = self._first(
-            f"""
-            SELECT
-              ABS(ST_Area(r.{result_geom}) - ST_Area(e.{reference_geom}))
-              / NULLIF(ST_Area(e.{reference_geom}), 0) AS area_error
-            FROM {self._schema}.{result_table} r
-            INNER JOIN {self._schema}.{reference_table} e
-              ON r.smid = e.smid
-            LIMIT 1
+        row = self._first(self._utm_metric_sql(
+            result_table,
+            reference_table,
             """
-        )
-        error = float(row["area_error"] or 0) if row else 0.0
+              ABS(ST_Area(res_m.g) - ST_Area(ref_m.g))
+              / NULLIF(ST_Area(ref_m.g), 0) AS area_error
+            """,
+        ))
+        if not row or row.get("area_error") is None:
+            return CompareResult(False, None, f"<= {max_ratio}", "Reference has no geometry to compare against")
+        error = float(row["area_error"] or 0)
         passed = error <= max_ratio
         return CompareResult(
             passed,
@@ -108,24 +114,95 @@ class PostgisResultComparator:
 
     def _hausdorff(self, result_table: str, reference_table: str, params: dict[str, Any]) -> CompareResult:
         max_meters = float(params.get("max_meters", 20))
-        result_geom = self._geometry_column(result_table)
-        reference_geom = self._geometry_column(reference_table)
-        row = self._first(
-            f"""
-            SELECT ST_HausdorffDistance(r.{result_geom}, e.{reference_geom}) AS hausdorff
-            FROM {self._schema}.{result_table} r
-            INNER JOIN {self._schema}.{reference_table} e
-              ON r.smid = e.smid
-            LIMIT 1
+        row = self._first(self._utm_metric_sql(
+            result_table,
+            reference_table,
             """
-        )
-        distance = float(row["hausdorff"] or 0) if row else 0.0
+              GREATEST(
+                ST_HausdorffDistance(res_m.g, ref_m.g),
+                ST_HausdorffDistance(ref_m.g, res_m.g)
+              ) AS hausdorff
+            """,
+        ))
+        if not row or row.get("hausdorff") is None:
+            return CompareResult(False, None, f"<= {max_meters} m", "Result or reference has no geometry")
+        distance = float(row["hausdorff"] or 0)
         passed = distance <= max_meters
         return CompareResult(
             passed,
             round(distance, 2),
             f"<= {max_meters} m",
             f"Hausdorff 偏移：实际 {distance:.2f} m / 预期 <= {max_meters} m",
+        )
+
+    def _fields(self, result_table: str, reference_table: str, params: dict[str, Any]) -> CompareResult:
+        mode = str(params.get("mode", "contains"))
+        result_geom = self._geometry_column(result_table).strip('"')
+        reference_geom = self._geometry_column(reference_table).strip('"')
+        result_fields = self._column_names(result_table, exclude={result_geom})
+        reference_fields = self._column_names(reference_table, exclude={reference_geom})
+        if mode == "exact":
+            passed = result_fields == reference_fields
+        else:
+            passed = set(reference_fields).issubset(set(result_fields))
+        return CompareResult(
+            passed,
+            result_fields,
+            f"{mode}: {reference_fields}",
+            f"字段：实际 {result_fields} / 预期 {mode}: {reference_fields}",
+        )
+
+    def _utm_metric_sql(self, result_table: str, reference_table: str, select_list: str) -> str:
+        result_geom = self._geometry_column(result_table)
+        reference_geom = self._geometry_column(reference_table)
+        return f"""
+            WITH
+            res_raw AS (
+              SELECT ST_Union(r.{result_geom}) AS g
+              FROM {self._schema}.{result_table} r
+              WHERE r.{result_geom} IS NOT NULL AND NOT ST_IsEmpty(r.{result_geom})
+            ),
+            ref_raw AS (
+              SELECT ST_Union(e.{reference_geom}) AS g
+              FROM {self._schema}.{reference_table} e
+              WHERE e.{reference_geom} IS NOT NULL AND NOT ST_IsEmpty(e.{reference_geom})
+            ),
+            centroid AS (
+              SELECT ST_Centroid(ST_Transform(g, 4326)) AS c FROM ref_raw WHERE g IS NOT NULL
+            ),
+            utm AS (
+              SELECT COALESCE((
+                SELECT
+                  (CASE WHEN ST_Y(c) >= 0 THEN 32600 ELSE 32700 END)
+                  + GREATEST(1, LEAST(60, FLOOR((ST_X(c) + 180) / 6)::int + 1))
+                FROM centroid
+              ), 32650) AS epsg
+            ),
+            res_m AS (
+              SELECT ST_Transform(res_raw.g, utm.epsg) AS g FROM res_raw, utm
+            ),
+            ref_m AS (
+              SELECT ST_Transform(ref_raw.g, utm.epsg) AS g FROM ref_raw, utm
+            )
+            SELECT {select_list}
+            FROM res_m, ref_m
+            """
+
+    def _column_names(self, table: str, exclude: set[str] | None = None) -> list[str]:
+        rows = self._all(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = :schema AND table_name = :table
+            ORDER BY ordinal_position
+            """,
+            {"schema": self._schema.strip('"'), "table": table.strip('"')},
+        )
+        skip = {name.lower() for name in (exclude or set())}
+        return sorted(
+            str(row["column_name"])
+            for row in rows
+            if str(row["column_name"]).lower() not in skip
         )
 
     def _geometry_column(self, table: str) -> str:
@@ -152,6 +229,11 @@ class PostgisResultComparator:
         with self._engine.connect() as conn:
             row = conn.execute(text(sql), params or {}).mappings().first()
             return dict(row) if row is not None else None
+
+    def _all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), params or {}).mappings().all()
+            return [dict(row) for row in rows]
 
 
 def dataset_sql_name(dataset: DatasetContext, location: dict[str, str] | None = None) -> str | None:

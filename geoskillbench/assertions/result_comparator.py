@@ -24,7 +24,7 @@ class ResultComparator:
     面积/距离指标先对齐到"参考数据集中心点选定的 UTM 带"（米制），
     避免 EPSG:4326 下面积是平方度、EPSG:3857 下远离赤道面积失真。
 
-    PostGIS 后端（方案 B，M3）后续以同一接口接入：compare(target, reference, metric, **params)。
+    PostGIS 后端见 `sql_result_comparator.PostgisResultComparator`，接口同样是 compare(..., metric, **params)。
     """
 
     METRICS = {"overlap_ratio", "area_error", "hausdorff_distance", "fields", "feature_count"}

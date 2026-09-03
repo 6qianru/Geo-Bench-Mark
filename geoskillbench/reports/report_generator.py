@@ -33,7 +33,8 @@ class ReportGenerator:
             lines.append(f"- `{stage}`: `{status}`")
         lines.extend(["", "## Assertions"])
         for item in result.assertions:
-            lines.append(f"- `{item['type']}`: `{'passed' if item['passed'] else 'failed'}` - {item['message']}")
+            backend = f" [{item['backend']}]" if item.get("backend") else ""
+            lines.append(f"- `{item['type']}`{backend}: `{'passed' if item['passed'] else 'failed'}` - {item['message']}")
         lines.extend(["", "## Judge"])
         judge = result.judge or {}
         lines.append(f"- Mode: `{judge.get('judge_mode', '')}`")

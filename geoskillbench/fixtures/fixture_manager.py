@@ -37,10 +37,8 @@ class FixtureManager:
         for fixture in scenario.data.reference:
             reference_datasets[fixture.id] = self._prepare_fixture(fixture, scenario, base_path)
         if registration is not None:
-            inputs = {item.alias: item for item in registration.inputs}
-            references = {item.alias: item for item in registration.references}
-            datasets = {key: self._context_from_descriptor(value) for key, value in inputs.items()}
-            reference_datasets = {key: self._context_from_descriptor(value) for key, value in references.items()}
+            datasets = self._overlay_registration(datasets, registration.inputs)
+            reference_datasets = self._overlay_registration(reference_datasets, registration.references)
         return datasets, reference_datasets
 
     def _prepare_fixture(self, fixture: FixtureConfig, scenario: Scenario, base_path: Path) -> DatasetContext:
@@ -74,6 +72,35 @@ class FixtureManager:
             source_alias=fixture.id,
             metadata=metadata,
         )
+
+    def _overlay_registration(
+        self,
+        original: dict[str, DatasetContext],
+        registered_items: list[DatasetDescriptor],
+    ) -> dict[str, DatasetContext]:
+        if not registered_items:
+            return original
+        registered = {item.alias: self._context_from_descriptor(item) for item in registered_items}
+        if len(original) == 1 and len(registered) == 1:
+            orig_key, orig_ctx = next(iter(original.items()))
+            reg_ctx = next(iter(registered.values()))
+            return {orig_key: self._merge_logical_id(reg_ctx, orig_ctx)}
+        return {
+            key: self._merge_logical_id(ctx, original.get(key))
+            for key, ctx in registered.items()
+        }
+
+    @staticmethod
+    def _merge_logical_id(from_registration: DatasetContext, from_fixture: DatasetContext | None) -> DatasetContext:
+        """data service 注册覆盖 descriptor 时保留 fixture 的 logical_id，供库内断言解析参考表名。"""
+        if from_fixture is None:
+            return from_registration
+        logical_id = (from_fixture.metadata or {}).get("logical_id")
+        if not logical_id:
+            return from_registration
+        metadata = dict(from_registration.metadata or {})
+        metadata.setdefault("logical_id", logical_id)
+        return from_registration.model_copy(update={"metadata": metadata})
 
     @staticmethod
     def _context_from_descriptor(descriptor: DatasetDescriptor) -> DatasetContext:

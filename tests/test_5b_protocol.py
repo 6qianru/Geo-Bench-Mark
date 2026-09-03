@@ -81,6 +81,65 @@ def test_supermap_result_is_rewritten_to_opaque_handle() -> None:
     assert location["tableName"] == "tmp_createBuffer_x"
 
 
+def test_http_tool_event_registers_supermap_result_for_assertions() -> None:
+    from geoskillbench.executors.http_agent_executor import HttpAgentExecutor
+    from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
+    from geoskillbench.models.result import ToolCallRecord
+
+    adapter = MCPToolAdapter()
+    adapter.register_datasets({}, run_id="run_ext")
+    executor = HttpAgentExecutor(adapter)
+    calls: list[ToolCallRecord] = []
+    pending: dict = {}
+    executor._consume_tool_event(
+        {"name": "createBuffer", "event_type": "tool_start", "run_id": "t1", "input": {"distance": 500}},
+        pending,
+        calls,
+    )
+    executor._consume_tool_event(
+        {
+            "name": "createBuffer",
+            "event_type": "tool_end",
+            "run_id": "t1",
+            "output": {
+                "success": True,
+                "tableName": "tmp_createBuffer_x",
+                "bufferResult": "agentx_gpa_result_sdx_tmp_createbuffer_x",
+                "bufferResultSvcURL": "http://example.invalid/iserver/tmp_createBuffer_x",
+            },
+        },
+        pending,
+        calls,
+    )
+    assert calls[0].result == {
+        "success": True,
+        "handle": "dh_run_ext_buffer_result",
+        "dataset": "buffer_result",
+        "alias": "buffer_result",
+        "role": "result",
+        "run_id": "run_ext",
+    }
+    assert adapter.get_result_location("buffer_result")["tableName"] == "tmp_createBuffer_x"
+
+
+def test_http_tool_event_keeps_non_gis_payload() -> None:
+    from geoskillbench.executors.http_agent_executor import HttpAgentExecutor
+    from geoskillbench.mcp.mcp_tool_adapter import MCPToolAdapter
+    from geoskillbench.models.result import ToolCallRecord
+
+    adapter = MCPToolAdapter()
+    adapter.register_datasets({}, run_id="run_ext")
+    executor = HttpAgentExecutor(adapter)
+    calls: list[ToolCallRecord] = []
+    executor._consume_tool_event(
+        {"name": "chat", "event_type": "tool_end", "run_id": "t2", "output": {"text": "完成"}},
+        {},
+        calls,
+    )
+    assert calls[0].result == {"text": "完成"}
+    assert adapter.get_result_location("buffer_result") is None
+
+
 def test_registration_rejects_cross_run_descriptor() -> None:
     with pytest.raises(ValidationError):
         RunRegistration.model_validate({"run_id": "run_1", "inputs": [_descriptor(run_id="run_2")]})

@@ -239,41 +239,32 @@ class AssertionEngine:
                 message=f"Reference dataset not found: {assertion.reference}",
                 target=target,
             )
+        params = {k: v for k, v in {
+            "min": assertion.min,
+            "max_ratio": assertion.max_ratio,
+            "max_meters": assertion.max_meters,
+            "mode": assertion.mode,
+            "count": assertion.count,
+        }.items() if v is not None}
         try:
             location = self.result_locator(target) if callable(self.result_locator) else None
-            in_db = self.sql_comparator is not None or location is not None or not getattr(result_dataset, "path", None)
-            if in_db:
-                if self.sql_comparator is None:
-                    raise ValueError("result_* 库内比对需要 GEO_EVAL_DATABASE_URL（结果库，不是 DATABASE_URL 报告库）")
-                result_table = dataset_sql_name(result_dataset, location)
-                reference_table = dataset_sql_name(reference_dataset)
-                if not result_table or not reference_table:
-                    raise ValueError("in-db comparison requires result and reference table names")
-                cmp = self.sql_comparator.compare(
-                    result_table,
-                    reference_table,
-                    metric,
-                    **{k: v for k, v in {
-                        "min": assertion.min,
-                        "max_ratio": assertion.max_ratio,
-                        "max_meters": assertion.max_meters,
-                        "mode": assertion.mode,
-                        "count": assertion.count,
-                    }.items() if v is not None},
-                )
+            result_table = dataset_sql_name(result_dataset, location)
+            reference_table = dataset_sql_name(reference_dataset)
+            use_postgis = (
+                self.sql_comparator is not None
+                and bool(result_table)
+                and bool(reference_table)
+            )
+            if use_postgis:
+                cmp = self.sql_comparator.compare(result_table, reference_table, metric, **params)
+                backend = "postgis"
+            elif getattr(result_dataset, "path", None) or getattr(reference_dataset, "path", None):
+                cmp = self.comparator.compare(result_dataset, reference_dataset, metric, **params)
+                backend = "file"
+            elif self.sql_comparator is None:
+                raise ValueError("result_* 库内比对需要 GEO_EVAL_DATABASE_URL（结果库，不是 DATABASE_URL 报告库）")
             else:
-                cmp = self.comparator.compare(
-                    result_dataset,
-                    reference_dataset,
-                    metric,
-                    **{k: v for k, v in {
-                        "min": assertion.min,
-                        "max_ratio": assertion.max_ratio,
-                        "max_meters": assertion.max_meters,
-                        "mode": assertion.mode,
-                        "count": assertion.count,
-                    }.items() if v is not None},
-                )
+                raise ValueError("in-db comparison requires result and reference table names")
         except Exception as exc:
             return AssertionItemResult(
                 type=assertion.type,
@@ -286,6 +277,9 @@ class AssertionEngine:
             passed=cmp.passed,
             message=cmp.detail,
             target=target,
+            actual=cmp.actual,
+            expected=cmp.expected,
+            backend=backend,
         )
 
     def _normalize(self, value: Any) -> Any:

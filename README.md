@@ -1,10 +1,10 @@
-# GeoSkillBench (地理空间智能体与 Skill 自动化评测平台)
+# GeoBenchMark (地理空间智能体与 Skill 自动化评测平台)
 
-> **版本**：`v0.0.6` | **状态**：`WIP (Work In Progress)`
+> **版本**：`v0.0.7` | **状态**：`WIP (Work In Progress)`
 > 
 > *注：本项目当前正处于持续迭代与完善中。*
 
-GeoSkillBench 是一个专为 **地理空间智能体（GIS Agent）** 与 **GIS Skill 技能包** 打造的自动化基准评测平台。
+GeoBenchMark 是一个专为 **地理空间智能体（GIS Agent）** 与 **GIS Skill 技能包** 打造的自动化基准评测平台。
 
 平台致力于解决 GIS 领域 Agent 在长链路工具调用、空间逻辑决策、多轮人机反问交互中的**可信度、执行稳定性与空间准确性**评测难题。
 
@@ -85,10 +85,12 @@ flowchart TD
 - **过程断言**：`skill_loaded`、`tool_called`、`tool_sequence`、`tool_argument_equals` 等。
 - **空间结果断言**：
   - `result_dataset_exists`：结果数据集生成检查；
-  - `result_overlap_ratio`：空间几何重叠率计算（IoU）；
-  - `result_area_error_max`：缓冲区/多边形面积相对误差计算；
+  - `result_overlap_ratio`：空间几何重叠率（交集面积/参考面积）；
+  - `result_area_error_max`：缓冲区/多边形面积相对误差；
+  - `result_distance_max`：Hausdorff 空间偏移（米）；
   - `result_feature_count`：输出要素数量核对；
   - `result_geometry_type_in` / `result_fields_match`：几何类型与属性字段模式匹配。
+  - 文件后端（GeoPandas）与 PostGIS 库内后端双路径；断言项带 `actual` / `expected` / `backend`。
 
 ### 3.3 批量运行与方差标定 (Batch & Variance Metrics)
 - 支持单场景 `repeat_count` 重复运行与多场景批量调度；

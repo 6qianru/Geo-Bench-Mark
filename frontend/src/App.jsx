@@ -194,7 +194,7 @@ function ResultDetail({ result }) {
               <li key={index} className={item.passed ? "assertion ok" : "assertion bad"}>
                 <span className="pill">{item.passed ? "passed" : "failed"}</span>
                 <span>
-                  {item.type}: {item.message}
+                  {item.type}{item.backend ? ` [${item.backend}]` : ""}: {item.message}
                 </span>
               </li>
             ))}

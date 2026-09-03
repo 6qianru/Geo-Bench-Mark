@@ -75,21 +75,29 @@ flowchart TD
 
 ## 3. 核心功能特性
 
-### 3.1 多模式执行器 (Executor Framework)
+### 3.1 双模式执行器 (Executor Framework)
 - **`skill`**：本地 Skill 引导模式，支持通过 LangGraph ReAct 驱动 Agent 遵循地理空间技能指引完成复杂任务。
 - **`orchestrator`**：本地 Orchestrator 智能体多轮调度外部黑盒 Agent。
-- **`external_driven`**：外部 Agent 自主推进，缺参数时主动向内置 `UserSimulator` 模拟用户发起反问闭环。
-- **`http_agent` / `nanobot`**：标准 HTTP 端点与轻量化 Agent 执行契约。
 
 ### 3.2 丰富的空间断言与可信基线
-- **过程断言**：`skill_loaded`、`tool_called`、`tool_sequence`、`tool_argument_equals` 等。
-- **空间结果断言**：
-  - `result_dataset_exists`：结果数据集生成检查；
+- **过程断言**（0 次数据库 / 0 次 LLM，纯轨迹确定性校验，读 ExecutionRecorder）：
+  - `skill_loaded`：技能是否加载（`skill_id`）；
+  - `tool_available`：工具是否可用（`tool`）；
+  - `tool_called`：工具是否被调用（`tool`）；
+  - `tool_sequence`：工具调用顺序，按序出现即可、不要求连续（`sequence: [a, b]`）；
+  - `tool_argument_equals`：某工具某参数等于期望值（`tool, argument, value`）；
+  - `result_dataset_exists`：结果数据集是否已登记（`alias`）；
+  - `result_geometry_type_in`：结果几何类型是否符合预期（`target, values: [Polygon]`）；
+  - `final_response_contains`：最终回答包含全部关键词（`values` / `value`）；
+  - `skill_reference_loaded` / `skill_reference_not_loaded`：技能文档是否（未）按需读取（`path`）；
+  - `skill_reference_loaded_before_tool`：先读文档再调某工具（`reference, tool`）；
+  - `skill_reference_load_count_less_than`：文档加载次数上限（`value`）。
+- **空间结果断言**（对真实几何做确定性比对，拒绝只信最终文字）：
   - `result_overlap_ratio`：空间几何重叠率（交集面积/参考面积）；
   - `result_area_error_max`：缓冲区/多边形面积相对误差；
   - `result_distance_max`：Hausdorff 空间偏移（米）；
   - `result_feature_count`：输出要素数量核对；
-  - `result_geometry_type_in` / `result_fields_match`：几何类型与属性字段模式匹配。
+  - `result_fields_match`：结果字段与参考字段匹配（exact / contains）。
   - 文件后端（GeoPandas）与 PostGIS 库内后端双路径；断言项带 `actual` / `expected` / `backend`。
 
 ### 3.3 批量运行与方差标定 (Batch & Variance Metrics)
